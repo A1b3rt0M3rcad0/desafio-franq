@@ -1,6 +1,7 @@
 from typing import Any, Protocol
 
 from package.agent.observer.contracts import ExecutionObserver
+from package.agent.runtime.loop import RuntimePolicy
 
 
 class AgentProgramResult(Protocol):
@@ -16,4 +17,5 @@ class AgentProgram(Protocol):
         session_id: str,
         question: str,
         observer: ExecutionObserver,
+        policy: RuntimePolicy,
     ) -> AgentProgramResult: ...

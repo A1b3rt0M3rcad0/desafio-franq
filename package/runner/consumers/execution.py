@@ -4,7 +4,7 @@ from package.agent.database.models.outbox import OutboxMessage
 from package.agent.database.repositories.executions import ExecutionRepository
 from package.agent.database.repositories.outbox import OutboxRepository
 from package.runner.contracts import RuntimeFactory
-from package.runner.runtime.retry import outbox_retry_delay
+from package.runner.runtime.retry import OutboxRetryPolicy
 
 
 class ExecutionConsumer:
@@ -15,11 +15,13 @@ class ExecutionConsumer:
         runtime_factory: RuntimeFactory,
         runner_id: str,
         batch_size: int,
+        retry_policy: OutboxRetryPolicy,
     ) -> None:
         self._session_factory = session_factory
         self._runtime_factory = runtime_factory
         self._runner_id = runner_id
         self._batch_size = batch_size
+        self._retry_policy = retry_policy
 
     async def consume_once(self) -> int:
         async with self._session_factory() as db:
@@ -52,7 +54,7 @@ class ExecutionConsumer:
                     await OutboxRepository(db).release_with_error(
                         persisted_message,
                         error="Execution not found",
-                        retry_delay_seconds=outbox_retry_delay(message.attempts),
+                        retry_delay_seconds=self._retry_policy.delay(message.attempts),
                     )
                 await db.commit()
                 return
@@ -77,7 +79,7 @@ class ExecutionConsumer:
                     await OutboxRepository(db).release_with_error(
                         persisted_message,
                         error=str(exc),
-                        retry_delay_seconds=outbox_retry_delay(message.attempts),
+                        retry_delay_seconds=self._retry_policy.delay(message.attempts),
                     )
                 await db.commit()
             return

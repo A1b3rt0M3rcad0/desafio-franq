@@ -4,6 +4,7 @@ from typing import Any
 from package.agent.observer.contracts import ExecutionObserver
 from package.agent.observer.events import ExecutionEvent, ExecutionEventType
 from package.agent.runtime.contracts import AgentProgram
+from package.agent.runtime.loop import RuntimePolicy
 
 
 @dataclass(frozen=True, slots=True)
@@ -13,9 +14,16 @@ class RuntimeResult:
 
 
 class AgentRuntime:
-    def __init__(self, *, program: AgentProgram, observer: ExecutionObserver) -> None:
+    def __init__(
+        self,
+        *,
+        program: AgentProgram,
+        observer: ExecutionObserver,
+        policy: RuntimePolicy,
+    ) -> None:
         self._program = program
         self._observer = observer
+        self._policy = policy
 
     async def run(
         self,
@@ -38,6 +46,7 @@ class AgentRuntime:
                 session_id=session_id,
                 question=question,
                 observer=self._observer,
+                policy=self._policy,
             )
             result = RuntimeResult(
                 answer=program_result.answer,

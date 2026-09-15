@@ -17,7 +17,13 @@ def _build_db(path: Path) -> None:
 def test_inspects_schema_and_executes_read_only_query(tmp_path: Path) -> None:
     path = tmp_path / "data.db"
     _build_db(path)
-    config = UserDatabaseConfig(path=path)
+    config = UserDatabaseConfig(
+        path=path,
+        connection_timeout_seconds=5.0,
+        query_timeout_seconds=5.0,
+        max_rows=1_000,
+        progress_handler_steps=1_000,
+    )
 
     schema = SQLiteSchemaInspector(config).inspect()
     result = SQLiteQueryExecutor(config).execute(

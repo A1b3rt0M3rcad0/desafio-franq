@@ -26,11 +26,14 @@ class SQLiteQueryExecutor:
         safe_sql = validate_read_only_sql(sql)
         deadline = time.monotonic() + self._config.query_timeout_seconds
 
-        with open_read_only_connection(self._config.path) as connection:
+        with open_read_only_connection(self._config) as connection:
             def progress_handler() -> int:
                 return int(time.monotonic() >= deadline)
 
-            connection.set_progress_handler(progress_handler, 1_000)
+            connection.set_progress_handler(
+                progress_handler,
+                self._config.progress_handler_steps,
+            )
             try:
                 cursor = connection.execute(safe_sql)
                 raw_rows = cursor.fetchmany(self._config.max_rows + 1)

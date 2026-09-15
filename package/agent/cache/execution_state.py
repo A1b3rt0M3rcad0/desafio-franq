@@ -5,13 +5,22 @@ from redis.asyncio import Redis
 
 
 class ExecutionHotState:
-    def __init__(self, redis: Redis, *, ttl_seconds: int) -> None:
+    def __init__(
+        self,
+        redis: Redis,
+        *,
+        key_prefix: str,
+        ttl_seconds: int,
+    ) -> None:
+        normalized_prefix = key_prefix.strip(":")
+        if not normalized_prefix:
+            raise ValueError("Redis key prefix cannot be empty")
         self._redis = redis
+        self._key_prefix = normalized_prefix
         self._ttl_seconds = ttl_seconds
 
-    @staticmethod
-    def _key(execution_id: str) -> str:
-        return f"execution:{execution_id}:state"
+    def _key(self, execution_id: str) -> str:
+        return f"{self._key_prefix}:execution:{execution_id}:state"
 
     async def set(self, execution_id: str, state: dict[str, Any]) -> None:
         await self._redis.set(

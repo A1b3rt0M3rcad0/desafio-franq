@@ -1,24 +1,24 @@
 services:
   postgres:
-    image: postgres:17-alpine
+    image: ${POSTGRES_IMAGE}
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
-      - "${POSTGRES_PORT}:5432"
+      - "${POSTGRES_PORT}:${POSTGRES_CONTAINER_PORT}"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+      interval: ${POSTGRES_HEALTHCHECK_INTERVAL}
+      timeout: ${POSTGRES_HEALTHCHECK_TIMEOUT}
+      retries: ${POSTGRES_HEALTHCHECK_RETRIES}
 
   redis:
-    image: redis:7-alpine
+    image: ${REDIS_IMAGE}
     ports:
-      - "${REDIS_PORT}:6379"
+      - "${REDIS_PORT}:${REDIS_CONTAINER_PORT}"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+      interval: ${REDIS_HEALTHCHECK_INTERVAL}
+      timeout: ${REDIS_HEALTHCHECK_TIMEOUT}
+      retries: ${REDIS_HEALTHCHECK_RETRIES}

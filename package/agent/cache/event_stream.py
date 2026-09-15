@@ -18,20 +18,27 @@ class ExecutionEventStream:
         self,
         redis: Redis,
         *,
-        maxlen: int = 5_000,
-        ttl_seconds: int = 21_600,
+        key_prefix: str,
+        maxlen: int,
+        ttl_seconds: int,
+        read_block_ms: int,
+        read_count: int,
     ) -> None:
+        normalized_prefix = key_prefix.strip(":")
+        if not normalized_prefix:
+            raise ValueError("Redis key prefix cannot be empty")
         self._redis = redis
+        self._key_prefix = normalized_prefix
         self._maxlen = maxlen
         self._ttl_seconds = ttl_seconds
+        self._read_block_ms = read_block_ms
+        self._read_count = read_count
 
-    @staticmethod
-    def _stream_key(execution_id: str) -> str:
-        return f"execution:{execution_id}:events"
+    def _stream_key(self, execution_id: str) -> str:
+        return f"{self._key_prefix}:execution:{execution_id}:events"
 
-    @staticmethod
-    def _sequence_key(execution_id: str) -> str:
-        return f"execution:{execution_id}:sequence"
+    def _sequence_key(self, execution_id: str) -> str:
+        return f"{self._key_prefix}:execution:{execution_id}:sequence"
 
     async def append(
         self,
@@ -63,13 +70,11 @@ class ExecutionEventStream:
         execution_id: str,
         *,
         after: str = "0-0",
-        block_ms: int = 15_000,
-        count: int = 100,
     ) -> list[StreamEvent]:
         result = await self._redis.xread(
             {self._stream_key(execution_id): after},
-            count=count,
-            block=block_ms,
+            count=self._read_count,
+            block=self._read_block_ms,
         )
         events: list[StreamEvent] = []
         for _stream, messages in result:

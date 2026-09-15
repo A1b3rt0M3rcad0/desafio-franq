@@ -4,6 +4,7 @@ import pytest
 
 from package.agent.observer.events import ExecutionEvent, ExecutionEventType
 from package.agent.runtime.execution import AgentRuntime
+from package.agent.runtime.loop import RuntimePolicy
 
 
 class RecordingObserver:
@@ -21,7 +22,9 @@ class ProgramResult:
 
 
 class Program:
-    async def execute(self, *, execution_id, session_id, question, observer):
+    async def execute(self, *, execution_id, session_id, question, observer, policy):
+        assert policy.max_iterations == 8
+        assert policy.max_sql_retries == 3
         await observer.emit(
             ExecutionEvent(
                 execution_id=execution_id,
@@ -35,7 +38,11 @@ class Program:
 @pytest.mark.asyncio
 async def test_runtime_emits_lifecycle_events() -> None:
     observer = RecordingObserver()
-    runtime = AgentRuntime(program=Program(), observer=observer)
+    runtime = AgentRuntime(
+        program=Program(),
+        observer=observer,
+        policy=RuntimePolicy(max_iterations=8, max_sql_retries=3),
+    )
 
     result = await runtime.run(
         execution_id="execution-1",

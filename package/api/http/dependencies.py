@@ -35,7 +35,11 @@ def get_event_stream() -> ExecutionEventStream:
     settings = get_settings()
     return ExecutionEventStream(
         get_redis(),
+        key_prefix=settings.redis_key_prefix,
+        maxlen=settings.redis_stream_maxlen,
         ttl_seconds=settings.execution_hot_state_ttl_seconds,
+        read_block_ms=settings.redis_stream_read_block_ms,
+        read_count=settings.redis_stream_read_count,
     )
 
 
@@ -43,5 +47,6 @@ def get_hot_state() -> ExecutionHotState:
     settings = get_settings()
     return ExecutionHotState(
         get_redis(),
+        key_prefix=settings.redis_key_prefix,
         ttl_seconds=settings.execution_hot_state_ttl_seconds,
     )

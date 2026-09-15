@@ -5,5 +5,7 @@ from pathlib import Path
 @dataclass(frozen=True, slots=True)
 class UserDatabaseConfig:
     path: Path
-    query_timeout_seconds: float = 5.0
-    max_rows: int = 1_000
+    connection_timeout_seconds: float
+    query_timeout_seconds: float
+    max_rows: int
+    progress_handler_steps: int

@@ -23,7 +23,7 @@ class SQLiteSchemaInspector:
         self._config = config
 
     def inspect(self) -> tuple[TableSchema, ...]:
-        with open_read_only_connection(self._config.path) as connection:
+        with open_read_only_connection(self._config) as connection:
             table_rows = connection.execute(
                 """
                 SELECT name
