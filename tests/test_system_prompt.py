@@ -15,6 +15,9 @@ def test_system_prompt_is_structured_and_rendered_in_pt_br() -> None:
     assert SYSTEM_PROMPT.name in rendered
     assert "perguntas de negócio" in rendered
     assert "Não invente" in rendered
+    assert "```visualization" in rendered
+    assert '"type": "bar"' in rendered
+    assert "até 5 blocos de visualização" in rendered
 
 
 def test_system_prompt_strip_returns_rendered_prompt() -> None:
