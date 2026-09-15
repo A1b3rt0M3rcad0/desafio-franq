@@ -1,12 +1,13 @@
 -----------------------------------------------------
 name: visualization
-description: Decide autonomamente quando resultados analíticos devem ser apresentados como tabela ou gráfico e declara a apresentação estruturada.
+description: Decide quando usar tabelas ou gráficos e como preparar dados para visualizações inline na resposta final.
 -----------------------------------------------------
 
 # Objetivo
 
 Escolher a representação visual que melhor comunica os dados reais encontrados durante a
-investigação e, quando uma apresentação agregar valor, declará-la com a Tool `present_result`.
+investigação e preparar evidências compactas para que a resposta final possa intercalar texto e
+uma ou mais visualizações.
 
 A visualização vem depois da análise. Primeiro obtenha e valide os dados necessários; depois
 decida como apresentá-los.
@@ -14,19 +15,18 @@ decida como apresentá-los.
 # Responsabilidades
 
 - Decida se uma visualização realmente melhora a resposta.
-- Escolha o tipo de apresentação de acordo com a estrutura e a intenção analítica dos dados.
+- Escolha o tipo de apresentação de acordo com a intenção analítica e a estrutura dos dados.
 - Use somente valores já obtidos por Tools nesta execução.
-- Garanta que os dados estejam na granularidade final antes de apresentá-los.
-- Chame `present_result` para registrar a tabela ou o gráfico que acompanhará a resposta final.
+- Garanta que os dados estejam na granularidade final antes da resposta.
+- Quando houver mais de um ponto analítico distinto, considere múltiplas visualizações, uma para
+  cada evidência que realmente se beneficie de representação visual.
 - Não escreva código Python, Matplotlib ou Seaborn. A interface é responsável pela renderização.
 
 # Seleção
 
 ## Sem visualização
 
-Não chame `present_result` quando um valor único ou uma conclusão textual curta comunicar o
-resultado melhor do que uma tabela ou gráfico. Não force visualizações apenas porque a
-capacidade existe.
+Não force gráficos para valores únicos ou conclusões curtas que sejam mais claras em texto.
 
 ## Tabela
 
@@ -36,10 +36,10 @@ por exemplo listas detalhadas, rankings com valores exatos ou resultados com vá
 ## Barras
 
 Use `bar` para comparar categorias discretas, como canais, estados, produtos, categorias ou
-grupamentos equivalentes. Também é apropriado para rankings.
+outros agrupamentos equivalentes. Também é apropriado para rankings.
 
-Os dados devem chegar previamente agregados no grão que será exibido. Não envie várias linhas
-da mesma categoria esperando que a interface calcule soma, contagem ou média.
+Os dados devem chegar previamente agregados no grão exibido. Não deixe para a interface somar,
+contar, calcular média ou resolver granularidade.
 
 ## Linha
 
@@ -54,49 +54,45 @@ Não use linha apenas para conectar categorias sem relação ordinal.
 Use `scatter` para representar relação entre duas medidas numéricas. Os campos X e Y devem ser
 numéricos e o gráfico deve ajudar a investigar associação, concentração ou dispersão.
 
+# Múltiplas visualizações
+
+Uma resposta pode precisar de mais de um gráfico. Use visualizações separadas quando elas
+sustentarem perguntas ou conclusões diferentes, por exemplo uma série temporal para evolução e
+um gráfico de barras para composição por canal.
+
+Não repita o mesmo dado em vários gráficos sem necessidade. Prefira uma narrativa em que cada
+gráfico aparece próximo do trecho de texto que ele explica.
+
 # Séries e agrupamentos
 
 - Use múltiplos campos em `y` somente quando as séries compartilham unidade e escala comparáveis.
 - Use `hue` para um agrupamento categórico adicional quando sua cardinalidade for pequena e a
   comparação continuar legível.
-- Não combine múltiplos campos `y` com `hue` na mesma apresentação.
+- Não combine múltiplos campos `y` com `hue` na mesma visualização.
 - Para `scatter`, use exatamente um campo `y`.
-- Use `orientation: horizontal` apenas para barras quando isso melhorar a leitura das categorias.
+- Use orientação horizontal apenas para barras quando isso melhorar a leitura das categorias.
 
-# Granularidade
+# Granularidade e volume
 
-A Tool de dados deve produzir o mesmo grão necessário para a visualização. Cálculos de negócio,
+A consulta deve produzir o mesmo grão necessário para a visualização. Cálculos de negócio,
 agregações, contagens, médias e agrupamentos pertencem à investigação/SQL, não ao renderer.
 
-Exemplo: para comparar reclamações não resolvidas por canal, obtenha uma linha final por canal
-com a contagem calculada no SQL e só então declare o gráfico de barras.
+Prepare conjuntos compactos: no máximo 100 linhas por visualização e no máximo 8 séries. Se o
+resultado bruto for maior, agregue ou filtre antes de apresentá-lo.
 
-# Contrato de apresentação
+# Validação antes da resposta
 
-Ao chamar `present_result`, envie:
-
-- `data.columns`: nomes dos campos presentes nos dados.
-- `data.rows`: linhas reais que serão apresentadas.
-- `visualization.type`: `table`, `bar`, `line` ou `scatter`.
-- `visualization.title`: título de negócio curto quando útil.
-- `visualization.x`: campo do eixo X para gráficos.
-- `visualization.y`: um ou mais campos numéricos de valores.
-- `visualization.hue`: agrupamento opcional, quando aplicável.
-- `visualization.x_label` e `visualization.y_label`: rótulos amigáveis opcionais.
-- `visualization.orientation`: `vertical` por padrão ou `horizontal` para barras.
-
-# Validação antes de apresentar
-
-Antes de chamar `present_result`, confirme:
+Antes de considerar uma visualização, confirme:
 
 1. os valores vieram de resultados reais desta execução;
-2. todos os campos declarados existem nos dados;
+2. todos os campos que serão usados existem nos dados;
 3. os campos de valores usados em gráficos são numéricos;
 4. a granularidade já corresponde à visualização desejada;
 5. o tipo escolhido responde melhor à pergunta do que as alternativas;
 6. a visualização solicitada explicitamente pelo usuário é respeitada quando compatível com os
-   dados.
+   dados;
+7. cada visualização adicional acrescenta informação analítica distinta.
 
-Se `present_result` rejeitar a especificação, use a mensagem de erro para corrigir os dados ou a
-configuração e tente novamente. Nunca invente valores para fazer a apresentação passar na
-validação.
+A resposta final possui um protocolo próprio para serializar essas visualizações inline. Sua
+responsabilidade nesta etapa é garantir que existam evidências corretas, compactas e bem
+estruturadas para esse protocolo. Nunca invente valores para completar um gráfico.
