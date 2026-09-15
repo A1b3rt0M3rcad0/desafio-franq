@@ -68,6 +68,12 @@ class FranqApiClient:
     def get_execution(self, execution_id: str) -> dict[str, Any]:
         return self._request_json("GET", f"/executions/{execution_id}")
 
+    def get_execution_trace(self, execution_id: str) -> list[dict[str, Any]]:
+        payload = self._request_json("GET", f"/executions/{execution_id}/trace")
+        if not isinstance(payload, list):
+            raise ValueError("Expected the trace endpoint to return a list")
+        return payload
+
     def observe_execution(
         self,
         execution_id: str,
