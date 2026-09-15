@@ -14,6 +14,13 @@ class ObservedFrame:
     payload: dict[str, Any]
 
 
+class FranqApiError(httpx.HTTPError):
+    def __init__(self, *, status_code: int, detail: str, request: httpx.Request) -> None:
+        super().__init__(detail, request=request)
+        self.status_code = status_code
+        self.detail = detail
+
+
 class FranqApiClient:
     def __init__(self, *, base_url: str, timeout_seconds: float) -> None:
         normalized = base_url.rstrip("/")
@@ -82,17 +89,13 @@ class FranqApiClient:
             timeout=self._timeout_seconds,
         ) as client:
             response = client.request(method, path, json=json_body)
-            try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                detail = _response_detail(response)
-                if detail:
-                    raise httpx.HTTPStatusError(
-                        f"{exc}. {detail}",
-                        request=exc.request,
-                        response=exc.response,
-                    ) from exc
-                raise
+            if response.is_error:
+                detail = _response_detail(response) or f"HTTP {response.status_code}"
+                raise FranqApiError(
+                    status_code=response.status_code,
+                    detail=detail,
+                    request=response.request,
+                )
             return response.json()
 
 
