@@ -1,6 +1,6 @@
 from package.agent.context.manager import ContextManager
 from package.agent.llm.contracts import LLMClient
-from package.agent.observer.contracts import ExecutionObserver
+from package.agent.observer.contracts import ExecutionEventSink
 from package.agent.runtime.execution import AgentRuntime
 from package.agent.runtime.loop import RuntimePolicy
 from package.agent.runtime.program import LangGraphAgentProgram
@@ -23,7 +23,7 @@ def compose_agent_program(
 def compose_runtime(
     *,
     program: LangGraphAgentProgram,
-    observer: ExecutionObserver,
+    observer: ExecutionEventSink,
     policy: RuntimePolicy,
 ) -> AgentRuntime:
     return AgentRuntime(program=program, observer=observer, policy=policy)
