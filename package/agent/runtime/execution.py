@@ -1,10 +1,12 @@
 from dataclasses import dataclass
 from typing import Any
 
+from package.agent.llm.realtime import bind_text_delta_handler
 from package.agent.observer.contracts import ExecutionEventSink
 from package.agent.observer.events import ExecutionEvent, ExecutionEventType
 from package.agent.runtime.contracts import AgentProgram
 from package.agent.runtime.loop import RuntimePolicy
+from package.agent.runtime.streaming import RuntimeStreamingEventSink
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,14 +42,20 @@ class AgentRuntime:
             )
         )
 
+        streaming_observer = RuntimeStreamingEventSink(
+            delegate=self._observer,
+            execution_id=execution_id,
+        )
+
         try:
-            program_result = await self._program.execute(
-                execution_id=execution_id,
-                session_id=session_id,
-                question=question,
-                observer=self._observer,
-                policy=self._policy,
-            )
+            with bind_text_delta_handler(streaming_observer.emit_model_delta):
+                program_result = await self._program.execute(
+                    execution_id=execution_id,
+                    session_id=session_id,
+                    question=question,
+                    observer=streaming_observer,
+                    policy=self._policy,
+                )
             result = RuntimeResult(
                 answer=program_result.answer,
                 result=program_result.result,
