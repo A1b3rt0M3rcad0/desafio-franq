@@ -40,7 +40,9 @@ async def create_execution(
     """Accept the execution durably; provider availability belongs to the Runner."""
 
     async with session_factory() as db:
-        if await SessionRepository(db).get(session_id) is None:
+        session_repository = SessionRepository(db)
+        session = await session_repository.get(session_id)
+        if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
 
         execution = await ExecutionRepository(db).create(session_id, request.question)
@@ -53,6 +55,7 @@ async def create_execution(
                 "question": request.question,
             },
         )
+        await session_repository.touch(session)
         await db.commit()
         return present_execution(execution)
 
