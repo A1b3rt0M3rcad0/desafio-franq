@@ -51,6 +51,8 @@ O Agent depende apenas de `LLMClient`. Os providers concretos usam LangChain:
 
 O provider ativo é escolhido por `LLM_PROVIDER=openai` ou `LLM_PROVIDER=deepseek`. A janela de contexto e a contagem de tokens vêm do modelo ativo; não são valores mockados no runtime.
 
+A API não bloqueia a criação de uma Execution com base na disponibilidade do Runner ou do provider. A etapa de Acceptance é responsável apenas por persistir `Execution(PENDING) + Outbox` atomicamente e retornar `202 Accepted`. Disponibilidade/configuração do LLM pertence ao Runner. Se o Runner estiver degradado ou o provider rejeitar a chamada, a Execution é marcada como `failed` e essa falha chega ao cliente pelo fluxo normal do Observer, sem deixar a conversa presa em `pending` e sem reexecutar indefinidamente a mesma tarefa.
+
 ## Runtime do Agent
 
 O `LangGraphAgentProgram` executa o ciclo:
