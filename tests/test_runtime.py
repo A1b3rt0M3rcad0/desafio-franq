@@ -25,6 +25,7 @@ class Program:
     async def execute(self, *, execution_id, session_id, question, observer, policy):
         assert policy.max_iterations == 8
         assert policy.max_sql_retries == 3
+        assert policy.max_parallel_tool_calls_per_tool == 3
         await observer.emit(
             ExecutionEvent(
                 execution_id=execution_id,
@@ -41,7 +42,11 @@ async def test_runtime_emits_lifecycle_events() -> None:
     runtime = AgentRuntime(
         program=Program(),
         observer=observer,
-        policy=RuntimePolicy(max_iterations=8, max_sql_retries=3),
+        policy=RuntimePolicy(
+            max_iterations=8,
+            max_sql_retries=3,
+            max_parallel_tool_calls_per_tool=3,
+        ),
     )
 
     result = await runtime.run(
