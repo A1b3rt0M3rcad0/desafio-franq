@@ -1,3 +1,13 @@
+x-python-service: &python-service
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: desafio-franq-app:local
+  env_file:
+    - .env
+  init: true
+  restart: unless-stopped
+
 services:
   postgres:
     image: ${POSTGRES_IMAGE}
@@ -7,6 +17,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "${POSTGRES_PORT}:${POSTGRES_CONTAINER_PORT}"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: ${POSTGRES_HEALTHCHECK_INTERVAL}
@@ -22,3 +34,78 @@ services:
       interval: ${REDIS_HEALTHCHECK_INTERVAL}
       timeout: ${REDIS_HEALTHCHECK_TIMEOUT}
       retries: ${REDIS_HEALTHCHECK_RETRIES}
+
+  api:
+    <<: *python-service
+    command:
+      - uvicorn
+      - package.api.http.app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    environment:
+      AGENT_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:${POSTGRES_CONTAINER_PORT}/${POSTGRES_DB}
+      REDIS_URL: redis://redis:${REDIS_CONTAINER_PORT}/0
+    ports:
+      - "${API_PORT}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  runner:
+    <<: *python-service
+    command:
+      - sh
+      - -c
+      - export RUNNER_ID="$$(hostname)"; exec python -m package.runner.main
+    environment:
+      AGENT_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:${POSTGRES_CONTAINER_PORT}/${POSTGRES_DB}
+      REDIS_URL: redis://redis:${REDIS_CONTAINER_PORT}/0
+      USER_DATABASE_PATH: /app/data/anexo_desafio_1.db
+    depends_on:
+      api:
+        condition: service_healthy
+
+  streamlit:
+    <<: *python-service
+    command:
+      - streamlit
+      - run
+      - package/ui/app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+      - --browser.gatherUsageStats=false
+    environment:
+      STREAMLIT_API_BASE_URL: http://api:8000
+    ports:
+      - "${STREAMLIT_PORT}:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=2).read()
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  postgres_data:
