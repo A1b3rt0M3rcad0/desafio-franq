@@ -21,8 +21,4 @@ RUN python -m pip install --upgrade pip \
         -e packages/ui \
     && mkdir -p /app/data
 
-COPY docker/images/app/entrypoint.sh /usr/local/bin/desafio-franq-entrypoint
-RUN chmod 0555 /usr/local/bin/desafio-franq-entrypoint
-
-ENTRYPOINT ["/usr/local/bin/desafio-franq-entrypoint"]
 CMD ["python", "-m", "package.runner.main"]
