@@ -12,9 +12,10 @@ from package.agent.llm.realtime import bind_text_delta_handler
 
 
 class StreamingToolFakeChatModel(GenericFakeChatModel):
+    stream_calls: int = 0
+
     def __init__(self) -> None:
         super().__init__(messages=iter(["decisão sem streaming"]))
-        self.stream_calls = 0
 
     def bind_tools(self, tools, **kwargs):
         del tools, kwargs
