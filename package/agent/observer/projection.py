@@ -1,11 +1,14 @@
 from copy import deepcopy
 from typing import Any
 
-from package.agent.observer.events import ExecutionEvent, ExecutionEventType
+from package.agent.observer.events import ExecutionEvent, ExecutionEventType, ExecutionPhase
 
 
 _PUBLIC_FIELDS: dict[ExecutionEventType, frozenset[str]] = {
     ExecutionEventType.EXECUTION_STARTED: frozenset({"session_id"}),
+    ExecutionEventType.EXECUTION_PHASE_CHANGED: frozenset({"phase"}),
+    ExecutionEventType.EXECUTION_CANCEL_REQUESTED: frozenset({"reason"}),
+    ExecutionEventType.EXECUTION_CANCELLED: frozenset({"reason", "partial_answer"}),
     ExecutionEventType.EXECUTION_COMPLETED: frozenset({"answer", "result"}),
     ExecutionEventType.EXECUTION_FAILED: frozenset({"error"}),
     ExecutionEventType.AGENT_ITERATION_STARTED: frozenset({"iteration", "max_iterations"}),
@@ -13,7 +16,9 @@ _PUBLIC_FIELDS: dict[ExecutionEventType, frozenset[str]] = {
     ExecutionEventType.AGENT_MAX_ITERATIONS_REACHED: frozenset(
         {"iterations", "max_iterations"}
     ),
+    ExecutionEventType.ANSWER_STARTED: frozenset({"iteration"}),
     ExecutionEventType.ANSWER_GENERATED: frozenset({"iterations", "stop_reason"}),
+    ExecutionEventType.ANSWER_COMPLETED: frozenset({"iteration", "content_length"}),
     ExecutionEventType.CONTEXT_LOADED: frozenset(
         {"history_turns", "snapshot_sequence", "skills", "tools"}
     ),
@@ -56,6 +61,12 @@ _PUBLIC_FIELDS: dict[ExecutionEventType, frozenset[str]] = {
     ),
 }
 
+_TERMINAL_PHASES = {
+    ExecutionPhase.COMPLETED.value,
+    ExecutionPhase.FAILED.value,
+    ExecutionPhase.CANCELLED.value,
+}
+
 
 def public_event(event: ExecutionEvent) -> tuple[str, dict[str, Any]]:
     """Map an internal event to the explicitly allowed public observation payload."""
@@ -75,12 +86,14 @@ def initial_projection(
 ) -> dict[str, Any]:
     durable = durable or {}
     status = str(durable.get("status") or "pending")
+    phase = _phase_from_status(status)
     return {
         "execution_id": execution_id,
         "session_id": durable.get("session_id"),
         "status": status,
         "sequence": 0,
-        "stage": _stage_from_status(status),
+        "phase": phase,
+        "stage": phase,
         "iteration": 0,
         "partial_answer": str(durable.get("answer") or ""),
         "answer": durable.get("answer"),
@@ -112,41 +125,47 @@ def reduce_projection(
 
     if event_type == ExecutionEventType.EXECUTION_STARTED.value:
         state["status"] = "running"
-        state["stage"] = "agent"
         state["session_id"] = payload.get("session_id") or state.get("session_id")
+        _set_phase(state, ExecutionPhase.CONTEXT.value)
+    elif event_type == ExecutionEventType.EXECUTION_PHASE_CHANGED.value:
+        _set_phase(state, str(payload.get("phase") or ""))
+    elif event_type == ExecutionEventType.EXECUTION_CANCEL_REQUESTED.value:
+        state["status"] = "cancel_requested"
+        _set_phase(state, ExecutionPhase.CANCEL_REQUESTED.value)
     elif event_type == ExecutionEventType.CONTEXT_LOADED.value:
-        state["stage"] = "context"
+        _set_phase(state, ExecutionPhase.REASONING.value)
     elif event_type == ExecutionEventType.AGENT_ITERATION_STARTED.value:
-        state["stage"] = "agent"
         state["iteration"] = int(payload.get("iteration") or state.get("iteration") or 0)
+        _set_phase(state, ExecutionPhase.REASONING.value)
     elif event_type == ExecutionEventType.LLM_STARTED.value:
-        state["stage"] = "reasoning"
+        _set_phase(state, ExecutionPhase.REASONING.value)
     elif event_type == ExecutionEventType.SKILL_REQUESTED.value:
-        state["stage"] = "skill"
+        _set_phase(state, ExecutionPhase.SKILL.value)
     elif event_type == ExecutionEventType.SKILL_CONTEXT_LOADED.value:
-        state["stage"] = "skill"
         state["active_skills"] = list(payload.get("skills") or [])
+        _set_phase(state, ExecutionPhase.SKILL.value)
     elif event_type == ExecutionEventType.SKILL_CONTEXT_RELEASED.value:
         state["active_skills"] = []
-        state["stage"] = "agent"
+        _set_phase(state, ExecutionPhase.REASONING.value)
     elif event_type == ExecutionEventType.TOOL_STARTED.value:
-        state["stage"] = "tool"
         _mark_tool_started(state, payload)
+        _set_phase(state, ExecutionPhase.TOOL.value)
     elif event_type in {
         ExecutionEventType.TOOL_COMPLETED.value,
         ExecutionEventType.TOOL_FAILED.value,
     }:
         _mark_tool_finished(state, payload)
-        state["stage"] = "agent"
-    elif event_type == ExecutionEventType.ANSWER_GENERATED.value:
-        state["stage"] = "answer"
+        _set_phase(state, ExecutionPhase.REASONING.value)
+    elif event_type == ExecutionEventType.ANSWER_STARTED.value:
+        _set_phase(state, ExecutionPhase.RESPONSE_STREAMING.value)
     elif event_type == ExecutionEventType.ASSISTANT_DELTA.value:
         content = str(payload.get("content") or "")
         state["partial_answer"] = f"{state.get('partial_answer') or ''}{content}"
-        state["stage"] = "answer"
+        _set_phase(state, ExecutionPhase.RESPONSE_STREAMING.value)
+    elif event_type == ExecutionEventType.ANSWER_COMPLETED.value:
+        _set_phase(state, ExecutionPhase.FINALIZING.value)
     elif event_type == ExecutionEventType.EXECUTION_COMPLETED.value:
         state["status"] = "completed"
-        state["stage"] = "completed"
         state["answer"] = payload.get("answer")
         state["partial_answer"] = str(
             payload.get("answer") or state.get("partial_answer") or ""
@@ -154,12 +173,21 @@ def reduce_projection(
         state["result"] = payload.get("result")
         state["active_skills"] = []
         state["active_tools"] = []
+        _set_phase(state, ExecutionPhase.COMPLETED.value)
     elif event_type == ExecutionEventType.EXECUTION_FAILED.value:
         state["status"] = "failed"
-        state["stage"] = "failed"
         state["error"] = payload.get("error")
         state["active_skills"] = []
         state["active_tools"] = []
+        _set_phase(state, ExecutionPhase.FAILED.value)
+    elif event_type == ExecutionEventType.EXECUTION_CANCELLED.value:
+        state["status"] = "cancelled"
+        partial = payload.get("partial_answer")
+        if partial is not None:
+            state["partial_answer"] = str(partial)
+        state["active_skills"] = []
+        state["active_tools"] = []
+        _set_phase(state, ExecutionPhase.CANCELLED.value)
 
     if event_type != ExecutionEventType.ASSISTANT_DELTA.value:
         activity_payload = {
@@ -191,6 +219,7 @@ def public_projection(
         "session_id",
         "status",
         "sequence",
+        "phase",
         "stage",
         "iteration",
         "partial_answer",
@@ -206,6 +235,21 @@ def public_projection(
     result = {key: deepcopy(projection.get(key)) for key in keys}
     result["realtime_available"] = realtime_available
     return result
+
+
+def _set_phase(state: dict[str, Any], phase: str) -> None:
+    if not phase:
+        return
+    current = str(state.get("phase") or state.get("stage") or "")
+    if current in _TERMINAL_PHASES and phase not in _TERMINAL_PHASES:
+        return
+    if (
+        current == ExecutionPhase.RESPONSE_STREAMING.value
+        and phase == ExecutionPhase.RESPONSE_PREPARING.value
+    ):
+        return
+    state["phase"] = phase
+    state["stage"] = phase
 
 
 def _mark_tool_started(state: dict[str, Any], payload: dict[str, Any]) -> None:
@@ -235,14 +279,18 @@ def _mark_tool_finished(state: dict[str, Any], payload: dict[str, Any]) -> None:
     ]
 
 
-def _stage_from_status(status: str) -> str:
+def _phase_from_status(status: str) -> str:
     if status == "completed":
-        return "completed"
+        return ExecutionPhase.COMPLETED.value
     if status == "failed":
-        return "failed"
+        return ExecutionPhase.FAILED.value
+    if status == "cancelled":
+        return ExecutionPhase.CANCELLED.value
+    if status == "cancel_requested":
+        return ExecutionPhase.CANCEL_REQUESTED.value
     if status == "running":
-        return "agent"
-    return "pending"
+        return ExecutionPhase.REASONING.value
+    return ExecutionPhase.PENDING.value
 
 
 def _serialize_datetime(value: Any) -> Any:
