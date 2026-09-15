@@ -4,8 +4,14 @@ from typing import Any
 import httpx
 import streamlit as st
 
-from package.ui.client import FranqApiClient, ObservedFrame
+from package.ui.client import FranqApiClient
 from package.ui.composer import render_chat_composer
+from package.ui.observation import (
+    ActivityPresentation,
+    apply_observed_frame,
+    new_observation_state,
+    phase_label,
+)
 from package.ui.rendering import render_result
 from package.ui.scroll import mount_sticky_chat_scroll
 from package.ui.settings import StreamlitSettings
@@ -36,14 +42,7 @@ def _set_session(session_id: str) -> None:
 
 
 def _new_active_response(execution_id: str) -> dict[str, Any]:
-    return {
-        "execution_id": execution_id,
-        "content": "",
-        "phase": "pending",
-        "result": None,
-        "error": None,
-        "cancel_requested": False,
-    }
+    return new_observation_state(execution_id)
 
 
 def _active_response(execution_id: str) -> dict[str, Any]:
@@ -229,46 +228,6 @@ def _render_history() -> None:
                 render_result(message.get("result"))
 
 
-def _phase_label(phase: str) -> str | None:
-    return {
-        "pending": "Aguardando o agente...",
-        "context": "Carregando contexto...",
-        "reasoning": "Analisando a solicitação...",
-        "skill": "Carregando conhecimento necessário...",
-        "tool": "Consultando os dados...",
-        "response_preparing": "Preparando a resposta...",
-        "response_streaming": "Respondendo...",
-        "finalizing": "Finalizando execução...",
-        "cancel_requested": "Interrompendo a resposta...",
-        "cancelled": "Interrompido",
-        "completed": "Concluído",
-        "failed": "Falha na execução",
-    }.get(phase)
-
-
-def _frame_phase(frame: ObservedFrame) -> str | None:
-    if frame.type == "execution.state":
-        return str(
-            frame.payload.get("phase")
-            or frame.payload.get("stage")
-            or frame.payload.get("status")
-            or ""
-        )
-    if frame.type == "execution.phase.changed":
-        return str(frame.payload.get("phase") or "")
-    if frame.type == "assistant.delta":
-        return "response_streaming"
-    if frame.type == "execution.cancel_requested":
-        return "cancel_requested"
-    if frame.type == "execution.cancelled":
-        return "cancelled"
-    if frame.type == "execution.completed":
-        return "completed"
-    if frame.type == "execution.failed":
-        return "failed"
-    return None
-
-
 def _refresh_durable_result(
     client: FranqApiClient,
     execution_id: str,
@@ -290,24 +249,65 @@ def _refresh_durable_result(
     return status, answer, result, error
 
 
-def _apply_state_answer(active: dict[str, Any], candidate: str) -> bool:
+def _apply_durable_result(
+    active: dict[str, Any],
+    *,
+    status: str | None,
+    answer: str,
+    result: dict[str, Any] | None,
+    error: str | None,
+) -> bool:
+    content_changed = False
     current = str(active.get("content") or "")
-    if not candidate or candidate == current:
-        return False
-    if candidate.startswith(current):
-        active["content"] = candidate
-        return True
-    if current.startswith(candidate):
-        return False
-    active["content"] = candidate
-    return True
+    if answer and answer != current:
+        if answer.startswith(current) or not current.startswith(answer):
+            active["content"] = answer
+            content_changed = True
+    if result is not None:
+        active["result"] = result
+    if error:
+        active["error"] = error
+    if status:
+        active["phase"] = status
+        if status == "completed":
+            active["response_started"] = True
+            active["response_completed"] = True
+    return content_changed
 
 
-def _append_delta(active: dict[str, Any], content: str) -> bool:
-    if not content:
-        return False
-    active["content"] = f"{active.get('content') or ''}{content}"
-    return True
+def _activity_from_state(value: dict[str, Any]) -> ActivityPresentation:
+    return ActivityPresentation(
+        sequence=value.get("sequence") if isinstance(value.get("sequence"), int) else None,
+        event_type=str(value.get("event_type") or ""),
+        title=str(value.get("title") or value.get("event_type") or "Atividade"),
+        detail=str(value.get("detail")) if value.get("detail") else None,
+        status=str(value.get("status") or "info"),
+    )
+
+
+def _render_activity(status_view, activity: ActivityPresentation) -> None:
+    icon = {
+        "running": "◌",
+        "success": "✓",
+        "error": "✕",
+        "info": "•",
+    }.get(activity.status, "•")
+    status_view.markdown(f"{icon} **{activity.title}**")
+    if not activity.detail:
+        return
+    if activity.event_type == "sql.generated" or "SELECT " in activity.detail.upper():
+        status_view.code(activity.detail, language="sql")
+    else:
+        status_view.caption(activity.detail)
+
+
+def _running_status_label(active: dict[str, Any], latest: ActivityPresentation | None = None) -> str:
+    if active.get("response_started"):
+        return "Análise concluída"
+    if latest is not None:
+        title = latest.title.rstrip(".")
+        return title if title.endswith("...") else f"{title}..."
+    return phase_label(str(active.get("phase") or "pending")) or "Execução em andamento..."
 
 
 def _observe_execution(
@@ -317,14 +317,20 @@ def _observe_execution(
 ) -> bool:
     active = _active_response(execution_id)
     terminal_status: str | None = None
+    realtime_degraded = False
 
     with response_container:
         with st.chat_message("assistant"):
-            initial_phase = str(active.get("phase") or "pending")
+            response_started = bool(active.get("response_started"))
             status_view = st.status(
-                _phase_label(initial_phase) or "Execução em andamento...",
+                _running_status_label(active),
                 expanded=False,
+                state="complete" if response_started else "running",
             )
+            for stored in active.get("activities", []):
+                if isinstance(stored, dict):
+                    _render_activity(status_view, _activity_from_state(stored))
+
             message_view = st.empty()
             if active.get("content"):
                 message_view.markdown(str(active["content"]))
@@ -337,53 +343,42 @@ def _observe_execution(
                     if frame.sequence is not None:
                         st.session_state.last_sequence = frame.sequence
 
-                    phase = _frame_phase(frame)
-                    if phase:
-                        active["phase"] = phase
-                        label = _phase_label(phase)
-                        if label:
-                            status_view.update(label=label)
+                    update = apply_observed_frame(active, frame)
+                    latest_activity: ActivityPresentation | None = None
+                    for activity in update.new_activities:
+                        latest_activity = activity
+                        _render_activity(status_view, activity)
 
-                    content_changed = False
-                    if frame.type == "execution.state":
-                        state_answer = frame.payload.get("partial_answer") or frame.payload.get("answer")
-                        if state_answer:
-                            content_changed = _apply_state_answer(active, str(state_answer))
-                        if isinstance(frame.payload.get("result"), dict):
-                            active["result"] = frame.payload["result"]
-                        state_status = str(frame.payload.get("status") or "")
-                        if state_status in {"completed", "failed", "cancelled"}:
-                            terminal_status = state_status
-                            active["error"] = frame.payload.get("error")
-                    elif frame.type == "assistant.delta":
-                        content_changed = _append_delta(
-                            active,
-                            str(frame.payload.get("content") or ""),
-                        )
-                    elif frame.type == "execution.completed":
-                        terminal_status = "completed"
-                        final_answer = str(frame.payload.get("answer") or "")
-                        if final_answer:
-                            content_changed = (
-                                _apply_state_answer(active, final_answer) or content_changed
+                    if update.content_changed:
+                        message_view.markdown(str(active.get("content") or ""))
+
+                    if update.transport_degraded:
+                        realtime_degraded = True
+                        if not active.get("response_started"):
+                            status_view.update(
+                                label="Reconectando à execução...",
+                                state="running",
                             )
-                        if isinstance(frame.payload.get("result"), dict):
-                            active["result"] = frame.payload["result"]
-                    elif frame.type == "execution.cancelled":
-                        terminal_status = "cancelled"
-                    elif frame.type == "execution.failed":
-                        terminal_status = "failed"
-                        active["error"] = str(
-                            frame.payload.get("error") or "erro desconhecido"
+                    elif active.get("response_started"):
+                        status_view.update(
+                            label="Análise concluída",
+                            state="complete",
+                            expanded=False,
                         )
-                    elif frame.type == "execution.realtime_unavailable":
-                        status_view.update(label="Recuperando estado da execução...")
+                    elif update.terminal_status == "failed":
+                        status_view.update(label="Falha na execução", state="error")
+                    else:
+                        status_view.update(
+                            label=_running_status_label(active, latest_activity),
+                            state="running",
+                        )
+
+                    if update.terminal_status is not None:
+                        terminal_status = update.terminal_status
 
                     st.session_state.active_response = active
-                    if content_changed:
-                        message_view.markdown(str(active.get("content") or ""))
-            except (httpx.HTTPError, ValueError) as exc:
-                status_view.update(label="Reconectando à execução...")
+            except (httpx.HTTPError, ValueError):
+                realtime_degraded = True
                 durable_status, durable_answer, durable_result, durable_error = (
                     _refresh_durable_result(
                         client,
@@ -392,46 +387,58 @@ def _observe_execution(
                         current_result=active.get("result"),
                     )
                 )
-                if durable_answer:
-                    _apply_state_answer(active, durable_answer)
-                    message_view.markdown(str(active.get("content") or ""))
-                if durable_result is not None:
-                    active["result"] = durable_result
-                active["error"] = durable_error or active.get("error")
-                terminal_status = (
-                    durable_status
-                    if durable_status in {"completed", "failed", "cancelled"}
-                    else None
+                changed = _apply_durable_result(
+                    active,
+                    status=durable_status,
+                    answer=durable_answer,
+                    result=durable_result,
+                    error=durable_error,
                 )
-                st.session_state.active_response = active
-                if terminal_status is None:
-                    st.caption(
-                        "Conexão realtime interrompida; tentando reanexar. "
-                        f"({exc})"
+                if changed:
+                    message_view.markdown(str(active.get("content") or ""))
+                if durable_status in {"completed", "failed", "cancelled"}:
+                    terminal_status = durable_status
+                elif not active.get("response_started"):
+                    status_view.update(
+                        label="Reconectando à execução...",
+                        state="running",
                     )
-                    return False
+                st.session_state.active_response = active
 
             if terminal_status not in {"completed", "failed", "cancelled"}:
-                status_view.update(label="Sincronizando estado final...")
-                for _ in range(40):
-                    durable_status, durable_answer, durable_result, durable_error = (
-                        _refresh_durable_result(
-                            client,
-                            execution_id,
-                            current_answer=str(active.get("content") or ""),
-                            current_result=active.get("result"),
-                        )
+                durable_status, durable_answer, durable_result, durable_error = (
+                    _refresh_durable_result(
+                        client,
+                        execution_id,
+                        current_answer=str(active.get("content") or ""),
+                        current_result=active.get("result"),
                     )
-                    if durable_answer:
-                        _apply_state_answer(active, durable_answer)
-                        message_view.markdown(str(active.get("content") or ""))
-                    if durable_result is not None:
-                        active["result"] = durable_result
-                    active["error"] = durable_error or active.get("error")
-                    if durable_status in {"completed", "failed", "cancelled"}:
-                        terminal_status = durable_status
-                        break
-                    time.sleep(0.25)
+                )
+                changed = _apply_durable_result(
+                    active,
+                    status=durable_status,
+                    answer=durable_answer,
+                    result=durable_result,
+                    error=durable_error,
+                )
+                if changed:
+                    message_view.markdown(str(active.get("content") or ""))
+                if durable_status in {"completed", "failed", "cancelled"}:
+                    terminal_status = durable_status
+                else:
+                    st.session_state.active_response = active
+                    if realtime_degraded and not active.get("response_started"):
+                        status_view.update(
+                            label="Reconectando à execução...",
+                            state="running",
+                        )
+                    elif active.get("response_started"):
+                        status_view.update(
+                            label="Análise concluída",
+                            state="complete",
+                            expanded=False,
+                        )
+                    return False
 
             if terminal_status == "completed":
                 final_answer = str(
@@ -439,7 +446,7 @@ def _observe_execution(
                 )
                 message_view.markdown(final_answer)
                 render_result(active.get("result"))
-                status_view.update(label="Concluído", state="complete")
+                status_view.update(label="Concluído", state="complete", expanded=False)
                 st.session_state.messages.append(
                     {
                         "role": "assistant",
@@ -456,7 +463,7 @@ def _observe_execution(
                 if partial:
                     message_view.markdown(partial)
                 st.caption("Resposta interrompida pelo usuário.")
-                status_view.update(label="Interrompido", state="complete")
+                status_view.update(label="Interrompido", state="complete", expanded=False)
                 st.session_state.messages.append(
                     {
                         "role": "assistant",
@@ -475,7 +482,7 @@ def _observe_execution(
                     f"{active.get('error') or 'erro desconhecido'}"
                 )
                 st.error(final_error)
-                status_view.update(label="Falha na execução", state="error")
+                status_view.update(label="Falha na execução", state="error", expanded=True)
                 st.session_state.messages.append(
                     {
                         "role": "assistant",
