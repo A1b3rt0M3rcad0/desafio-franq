@@ -62,6 +62,8 @@ class LangChainLLMClient(LLMClient):
         )
 
     def count_text_tokens(self, text: str) -> int:
+        if not text:
+            return 0
         return int(self._model.get_num_tokens(text))
 
     def count_tokens(
@@ -73,18 +75,21 @@ class LangChainLLMClient(LLMClient):
         total = 0
         normalized_messages = list(messages)
         if normalized_messages:
-            total += int(
-                self._model.get_num_tokens_from_messages(
-                    to_langchain_messages(normalized_messages)
-                )
-            )
+            langchain_messages = to_langchain_messages(normalized_messages)
+            try:
+                total += int(self._model.get_num_tokens_from_messages(langchain_messages))
+            except (NotImplementedError, ValueError) as exc:
+                if not _is_unsupported_message_counter(exc):
+                    raise
+                total += self.count_text_tokens(_serialize_messages(normalized_messages))
         if tools:
             tool_payload = json.dumps(
                 [_to_langchain_tool(tool) for tool in tools],
                 ensure_ascii=False,
                 separators=(",", ":"),
+                sort_keys=True,
             )
-            total += int(self._model.get_num_tokens(tool_payload))
+            total += self.count_text_tokens(tool_payload)
         return total
 
     async def invoke(
@@ -140,6 +145,33 @@ class LangChainLLMClient(LLMClient):
         if not normalized_messages:
             raise ValueError("At least one LLM message is required")
         return normalized_messages
+
+
+def _serialize_messages(messages: Sequence[LLMMessage]) -> str:
+    return json.dumps(
+        [
+            {
+                "role": message.role.value,
+                "content": message.content,
+                "tool_call_id": message.tool_call_id,
+                "tool_calls": [call.model_dump(mode="json") for call in message.tool_calls],
+            }
+            for message in messages
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _is_unsupported_message_counter(exc: Exception) -> bool:
+    if isinstance(exc, NotImplementedError):
+        return True
+    message = str(exc).lower()
+    return (
+        "get_num_tokens_from_messages" in message
+        and ("not presently implemented" in message or "not implemented" in message)
+    )
 
 
 def _to_langchain_tool(tool: LLMToolDefinition) -> dict[str, Any]:
