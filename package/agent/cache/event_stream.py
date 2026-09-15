@@ -78,17 +78,40 @@ class ExecutionEventStream:
         )
         events: list[StreamEvent] = []
         for _stream, messages in result:
-            for stream_id, fields in messages:
-                events.append(
-                    StreamEvent(
-                        stream_id=str(stream_id),
-                        sequence=int(fields["sequence"]),
-                        event_type=fields["type"],
-                        payload=json.loads(fields["payload"]),
-                    )
-                )
+            events.extend(self._decode_messages(messages))
         return events
+
+    async def retained(self, execution_id: str) -> list[StreamEvent]:
+        messages = await self._redis.xrange(
+            self._stream_key(execution_id),
+            min="-",
+            max="+",
+            count=self._maxlen,
+        )
+        return self._decode_messages(messages)
+
+    async def latest(self, execution_id: str) -> StreamEvent | None:
+        messages = await self._redis.xrevrange(
+            self._stream_key(execution_id),
+            max="+",
+            min="-",
+            count=1,
+        )
+        decoded = self._decode_messages(messages)
+        return decoded[0] if decoded else None
 
     async def expire(self, execution_id: str) -> None:
         await self._redis.expire(self._stream_key(execution_id), self._ttl_seconds)
         await self._redis.expire(self._sequence_key(execution_id), self._ttl_seconds)
+
+    @staticmethod
+    def _decode_messages(messages: list[tuple[str, dict[str, str]]]) -> list[StreamEvent]:
+        return [
+            StreamEvent(
+                stream_id=str(stream_id),
+                sequence=int(fields["sequence"]),
+                event_type=fields["type"],
+                payload=json.loads(fields["payload"]),
+            )
+            for stream_id, fields in messages
+        ]
