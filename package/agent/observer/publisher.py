@@ -60,6 +60,7 @@ class RedisExecutionEventSink:
             if event.type in {
                 ExecutionEventType.EXECUTION_COMPLETED,
                 ExecutionEventType.EXECUTION_FAILED,
+                ExecutionEventType.EXECUTION_CANCELLED,
             }:
                 await self._hot_state.expire(event.execution_id)
                 await self._event_stream.expire(event.execution_id)
