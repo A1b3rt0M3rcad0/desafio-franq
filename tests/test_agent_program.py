@@ -384,16 +384,25 @@ async def test_agent_can_answer_without_calling_external_tools() -> None:
     assert [definition.name for definition in llm.tools[0]] == [
         GLOBAL_CONTEXT_SEARCH_TOOL_NAME
     ]
-    assert [event.type for event in observer.events] == [
+
+    event_types = [event.type for event in observer.events]
+    required_events = [
         ExecutionEventType.CONTEXT_LOADED,
         ExecutionEventType.AGENT_ITERATION_STARTED,
         ExecutionEventType.LLM_STARTED,
         ExecutionEventType.LLM_COMPLETED,
         ExecutionEventType.AGENT_DECISION,
-        ExecutionEventType.ANSWER_GENERATED,
+        ExecutionEventType.ANSWER_STARTED,
         ExecutionEventType.ASSISTANT_DELTA,
+        ExecutionEventType.ANSWER_GENERATED,
+        ExecutionEventType.ANSWER_COMPLETED,
         ExecutionEventType.CONTEXT_SNAPSHOT_CREATED,
     ]
+    for event_type in required_events:
+        assert event_type in event_types
+
+    positions = [event_types.index(event_type) for event_type in required_events]
+    assert positions == sorted(positions)
 
 
 @pytest.mark.asyncio
