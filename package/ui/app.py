@@ -11,6 +11,10 @@ from package.ui.components.activity_panel import (
     latest_activity,
 )
 from package.ui.components.composer import render_chat_composer
+from package.ui.components.conversation_sidebar import (
+    DEFAULT_CONVERSATION_PAGE_SIZE,
+    render_conversation_sidebar,
+)
 from package.ui.components.sticky_scroll import mount_sticky_chat_scroll
 from package.ui.observation import (
     ActivityPresentation,
@@ -65,6 +69,17 @@ def _clear_active_execution() -> None:
     st.session_state.last_sequence = None
     if "execution_id" in st.query_params:
         del st.query_params["execution_id"]
+
+
+def _reset_to_new_conversation() -> None:
+    st.session_state.session_id = None
+    st.session_state.messages = []
+    st.session_state.active_execution_id = None
+    st.session_state.active_response = None
+    st.session_state.last_sequence = None
+    for name in ("session_id", "execution_id"):
+        if name in st.query_params:
+            del st.query_params[name]
 
 
 def _trace_cache() -> dict[str, list[dict[str, Any]]]:
@@ -184,7 +199,7 @@ def _load_history(client: FranqApiClient, session_id: str) -> None:
         del st.query_params["execution_id"]
 
 
-def _ensure_session(client: FranqApiClient) -> str:
+def _ensure_session(client: FranqApiClient) -> str | None:
     requested = _query_value("session_id")
     current = st.session_state.get("session_id")
 
@@ -192,90 +207,91 @@ def _ensure_session(client: FranqApiClient) -> str:
         try:
             client.get_session(requested)
         except httpx.HTTPError:
-            requested = None
+            if "session_id" in st.query_params:
+                del st.query_params["session_id"]
         else:
             _set_session(requested)
             _load_history(client, requested)
             return requested
 
     if current:
-        st.query_params["session_id"] = current
+        st.query_params["session_id"] = str(current)
         if "messages" not in st.session_state:
-            _load_history(client, current)
+            _load_history(client, str(current))
         return str(current)
 
-    created = client.create_session()
-    session_id = str(created["id"])
-    _set_session(session_id)
-    _load_history(client, session_id)
-    return session_id
+    st.session_state.setdefault("messages", [])
+    st.session_state.setdefault("active_execution_id", None)
+    st.session_state.setdefault("active_response", None)
+    st.session_state.setdefault("last_sequence", None)
+    return None
 
 
-def _new_conversation(client: FranqApiClient) -> None:
-    created = client.create_session()
-    session_id = str(created["id"])
-    st.session_state.clear()
-    _set_session(session_id)
-    st.session_state.messages = []
-    st.session_state.active_execution_id = None
-    st.session_state.active_response = None
-    st.session_state.last_sequence = None
-    if "execution_id" in st.query_params:
-        del st.query_params["execution_id"]
-    st.rerun()
-
-
-def _switch_session(client: FranqApiClient, session_id: str) -> None:
-    _set_session(session_id)
-    _clear_active_execution()
-    _load_history(client, session_id)
-    st.rerun()
-
-
-def _session_label(session: dict[str, Any]) -> str:
-    session_id = str(session.get("id") or "")
-    metadata = session.get("metadata")
-    if isinstance(metadata, dict):
-        title = metadata.get("title")
-        if title:
-            return str(title)
-    created_at = str(session.get("created_at") or "").replace("T", " ")[:16]
-    short_id = session_id[:8] if session_id else "sessão"
-    return f"{created_at} · {short_id}" if created_at else short_id
-
-
-def _render_session_selector(client: FranqApiClient, session_id: str) -> None:
+def _sessions_limit() -> int:
+    raw = _query_value("sessions_limit")
+    if raw is None:
+        return DEFAULT_CONVERSATION_PAGE_SIZE
     try:
-        sessions = client.list_sessions(limit=100)
-    except (httpx.HTTPError, ValueError) as exc:
-        st.warning(f"Não foi possível carregar as sessões: {exc}")
-        return
+        parsed = int(raw)
+    except ValueError:
+        return DEFAULT_CONVERSATION_PAGE_SIZE
+    return max(DEFAULT_CONVERSATION_PAGE_SIZE, min(parsed, 200))
 
-    by_id = {
-        str(session["id"]): session
-        for session in sessions
-        if isinstance(session, dict) and session.get("id")
-    }
-    if session_id not in by_id:
+
+def _handle_sidebar_actions(client: FranqApiClient) -> None:
+    rename_id = _query_value("rename_session_id")
+    rename_title = _query_value("rename_session_title")
+    if rename_id:
+        for key in ("rename_session_id", "rename_session_title"):
+            if key in st.query_params:
+                del st.query_params[key]
+        if rename_title:
+            try:
+                client.update_session_title(rename_id, rename_title)
+            except httpx.HTTPError as exc:
+                st.sidebar.error(f"Não foi possível renomear a conversa: {exc}")
+            else:
+                st.rerun()
+
+    delete_id = _query_value("delete_session_id")
+    if delete_id:
+        del st.query_params["delete_session_id"]
         try:
-            by_id[session_id] = client.get_session(session_id)
-        except httpx.HTTPError:
-            pass
+            client.delete_session(delete_id)
+        except httpx.HTTPError as exc:
+            st.sidebar.error(f"Não foi possível excluir a conversa: {exc}")
+        else:
+            if str(st.session_state.get("session_id") or "") == delete_id:
+                _reset_to_new_conversation()
+            st.rerun()
 
-    options = list(by_id)
-    if not options:
+
+def _render_conversations(client: FranqApiClient, session_id: str | None) -> None:
+    limit = _sessions_limit()
+    request_limit = min(limit + 1, 200)
+    try:
+        sessions = client.list_sessions(limit=request_limit)
+    except (httpx.HTTPError, ValueError) as exc:
+        st.warning(f"Não foi possível carregar as conversas: {exc}")
         return
 
-    index = options.index(session_id) if session_id in options else 0
-    selected = st.selectbox(
-        "Conversas",
-        options,
-        index=index,
-        format_func=lambda value: _session_label(by_id[value]),
-        key=f"session_selector_{session_id}",
+    has_more = len(sessions) > limit
+    visible = sessions[:limit]
+    visible_ids = {str(item.get("id") or "") for item in visible}
+    if session_id and session_id not in visible_ids:
+        try:
+            selected = client.get_session(session_id)
+        except httpx.HTTPError:
+            selected = None
+        if selected:
+            visible.insert(0, selected)
+
+    render_conversation_sidebar(
+        visible,
+        active_session_id=session_id,
+        current_limit=limit,
+        has_more=has_more,
     )
-    if selected != session_id:
-        _switch_session(client, selected)
 
 
 def _history_panel_state(message: dict[str, Any]) -> tuple[str, str]:
@@ -562,10 +578,23 @@ def _request_stop(client: FranqApiClient, execution_id: str) -> None:
     st.session_state.active_response = active
 
 
-def _submit_question(client: FranqApiClient, session_id: str, question: str) -> None:
+def _submit_question(
+    client: FranqApiClient,
+    session_id: str | None,
+    question: str,
+) -> None:
     try:
-        execution = client.create_execution(session_id=session_id, question=question)
-    except httpx.HTTPError as exc:
+        if session_id is None:
+            started = client.start_session(question=question)
+            session = started.get("session")
+            execution = started.get("execution")
+            if not isinstance(session, dict) or not isinstance(execution, dict):
+                raise ValueError("Invalid start-session response")
+            session_id = str(session["id"])
+            _set_session(session_id)
+        else:
+            execution = client.create_execution(session_id=session_id, question=question)
+    except (httpx.HTTPError, ValueError) as exc:
         with st.chat_message("assistant"):
             st.error(f"Não foi possível iniciar a execução: {exc}")
         return
@@ -595,6 +624,8 @@ def main() -> None:
     st.title("Assistente Virtual de Dados")
     st.caption("Faça perguntas sobre os dados em linguagem natural.")
 
+    _handle_sidebar_actions(client)
+
     try:
         session_id = _ensure_session(client)
     except httpx.HTTPError as exc:
@@ -603,13 +634,16 @@ def main() -> None:
 
     with st.sidebar:
         st.subheader("Conversas")
-        _render_session_selector(client, session_id)
-        if st.button("Nova conversa", use_container_width=True):
-            try:
-                _new_conversation(client)
-            except httpx.HTTPError as exc:
-                st.error(f"Não foi possível criar uma nova sessão: {exc}")
-        st.caption(f"Sessão atual: `{session_id}`")
+        active_execution = st.session_state.get("active_execution_id")
+        if st.button(
+            "Nova conversa",
+            use_container_width=True,
+            disabled=bool(active_execution),
+        ):
+            _reset_to_new_conversation()
+            st.rerun()
+        _render_conversations(client, session_id)
+        st.caption("Clique duas vezes para renomear. Clique com o botão direito para opções.")
 
     _render_history(client)
 
