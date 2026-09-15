@@ -37,6 +37,21 @@ Existem três responsabilidades de dados distintas:
 
 A conexão HTTP não é proprietária da execução. Atualizar a página ou perder a conexão do navegador interrompe apenas a observação da execução. O Runner continua processando, o Observer continua publicando os eventos e o cliente pode se reconectar ao Redis Stream utilizando `Last-Event-ID` para continuar a partir do último evento recebido.
 
+## Configuração
+
+Os valores operacionais do backend não ficam definidos diretamente no código. A configuração é carregada do ambiente por meio de `pydantic-settings`. O arquivo `.env.example` contém valores recomendados para desenvolvimento local e deve ser copiado para `.env` antes da execução.
+
+As principais categorias configuráveis são:
+
+- API: título e criação automática do schema local.
+- PostgreSQL: imagem, credenciais, portas e healthcheck.
+- Redis: conexão, namespace das chaves, TTL do hot state, tamanho e leitura dos Streams.
+- Database Tool: caminho do SQLite, timeout de conexão, timeout de query, limite de linhas e frequência do progress handler.
+- Agent Runtime: quantidade máxima de iterações e tentativas de correção de SQL.
+- Runner/Outbox: identificador do worker, intervalo de polling, batch size e política de retry/backoff.
+
+Parâmetros que fazem parte do protocolo ou do domínio, como nomes de eventos, estados da execução e regras de segurança SQL, permanecem definidos em código por não serem configuração de ambiente.
+
 ## Escopo atual
 
 Esta etapa estabelece a fundação arquitetural e de infraestrutura do projeto: boundaries entre packages, modelos de execução durável e outbox, hot state e streams no Redis, contratos do Observer, trace de execução, endpoints da API, consumer do Runner e uma ferramenta de acesso read-only ao banco SQLite fornecido no desafio.
