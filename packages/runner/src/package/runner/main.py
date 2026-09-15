@@ -4,7 +4,6 @@ import signal
 from package.agent.cache.runner_health import RunnerHealthStore
 from package.agent.composer.agent import compose_default_skills, compose_tools
 from package.agent.composer.runtime import compose_agent_program
-from package.agent.tools.presentation.tool import PresentationTool
 from package.runner.composition.agent import AgentRuntimeFactory
 from package.runner.composition.context import compose_context_manager
 from package.runner.composition.database import compose_agent_database
@@ -52,7 +51,7 @@ async def run() -> None:
             max_rows=settings.user_database_max_rows,
             progress_handler_steps=settings.user_database_progress_handler_steps,
         )
-        tools = compose_tools(database_tool, PresentationTool())
+        tools = compose_tools(database_tool)
         skills = compose_default_skills()
         llm = compose_llm(settings)
         profile = llm.profile

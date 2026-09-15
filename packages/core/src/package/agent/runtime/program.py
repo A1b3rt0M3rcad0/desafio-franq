@@ -15,7 +15,6 @@ from package.agent.observer.events import (
 )
 from package.agent.runtime.loop import RuntimePolicy
 from package.agent.runtime.state import AgentGraphState
-from package.agent.tools.contracts import ToolInvocationResult
 from package.agent.tools.registry import ToolRegistry
 
 
@@ -31,12 +30,6 @@ Se os dados forem insuficientes, deixe a limitação explícita. Seja direto, cl
 class LangGraphAgentProgramResult:
     answer: str
     result: dict[str, Any]
-
-
-@dataclass(frozen=True, slots=True)
-class _ExternalToolCallResult:
-    content: str
-    artifacts: dict[str, dict[str, Any]]
 
 
 class LangGraphAgentProgram:
@@ -138,7 +131,6 @@ class LangGraphAgentProgram:
             "tool_call_count": 0,
             "skill_use_count": 0,
             "max_parallel_tool_calls_per_tool": policy.max_parallel_tool_calls_per_tool,
-            "artifacts": {},
             "answer": "",
             "stop_reason": None,
             "observer": observer,
@@ -170,19 +162,14 @@ class LangGraphAgentProgram:
             )
         )
 
-        result: dict[str, Any] = {
-            "iterations": final_state["iteration"],
-            "tool_calls": final_state["tool_call_count"],
-            "skill_uses": final_state["skill_use_count"],
-            "stop_reason": final_state["stop_reason"],
-        }
-        presentation = final_state["artifacts"].get("presentation")
-        if presentation is not None:
-            result["presentation"] = presentation
-
         return LangGraphAgentProgramResult(
             answer=final_state["answer"],
-            result=result,
+            result={
+                "iterations": final_state["iteration"],
+                "tool_calls": final_state["tool_call_count"],
+                "skill_uses": final_state["skill_use_count"],
+                "stop_reason": final_state["stop_reason"],
+            },
         )
 
     async def _agent_node(self, state: AgentGraphState) -> dict[str, Any]:
@@ -376,7 +363,6 @@ class LangGraphAgentProgram:
     async def _action_node(self, state: AgentGraphState) -> dict[str, Any]:
         calls = list(state["pending_tool_calls"])
         contents: dict[str, str] = {}
-        artifacts = dict(state["artifacts"])
         active_skill_names: list[str] = []
         skill_use_count = 0
         external_calls: list[LLMToolCall] = []
@@ -437,12 +423,8 @@ class LangGraphAgentProgram:
             contents.update(dict(results))
 
         if external_calls:
-            external_contents, external_artifacts = await self._execute_external_calls(
-                state,
-                external_calls,
-            )
-            contents.update(external_contents)
-            artifacts.update(external_artifacts)
+            results = await self._execute_external_calls(state, external_calls)
+            contents.update(results)
 
         messages = list(state["messages"])
         for call in calls:
@@ -462,7 +444,6 @@ class LangGraphAgentProgram:
                 state["tool_call_count"] + len(external_calls) + len(context_search_calls)
             ),
             "skill_use_count": state["skill_use_count"] + skill_use_count,
-            "artifacts": artifacts,
         }
 
     async def _execute_context_search_call(
@@ -536,10 +517,10 @@ class LangGraphAgentProgram:
         self,
         state: AgentGraphState,
         calls: list[LLMToolCall],
-    ) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
+    ) -> dict[str, str]:
         semaphores: dict[str, asyncio.Semaphore] = {}
 
-        async def execute(call: LLMToolCall) -> tuple[str, _ExternalToolCallResult]:
+        async def execute(call: LLMToolCall) -> tuple[str, str]:
             semaphore = semaphores.setdefault(
                 call.name,
                 asyncio.Semaphore(state["max_parallel_tool_calls_per_tool"]),
@@ -548,18 +529,13 @@ class LangGraphAgentProgram:
                 return call.id, await self._execute_external_call(state, call)
 
         pairs = await asyncio.gather(*(execute(call) for call in calls))
-        contents: dict[str, str] = {}
-        artifacts: dict[str, dict[str, Any]] = {}
-        for call_id, result in pairs:
-            contents[call_id] = result.content
-            artifacts.update(result.artifacts)
-        return contents, artifacts
+        return dict(pairs)
 
     async def _execute_external_call(
         self,
         state: AgentGraphState,
         call: LLMToolCall,
-    ) -> _ExternalToolCallResult:
+    ) -> str:
         await _emit_phase(
             state["observer"],
             state["execution_id"],
@@ -578,11 +554,9 @@ class LangGraphAgentProgram:
             )
         )
         failed = False
-        artifacts: dict[str, dict[str, Any]] = {}
         try:
             tool = self._tools.get(call.name)
-            invocation_result = await tool.invoke(call.arguments)
-            result, artifacts = _unwrap_tool_result(invocation_result)
+            result = await tool.invoke(call.arguments)
             content = _serialize_tool_message(ok=True, result=result)
             await state["observer"].emit(
                 ExecutionEvent(
@@ -596,27 +570,8 @@ class LangGraphAgentProgram:
                     },
                 )
             )
-            presentation = artifacts.get("presentation")
-            if presentation is not None:
-                visualization = presentation.get("visualization")
-                visualization = visualization if isinstance(visualization, dict) else {}
-                await state["observer"].emit(
-                    ExecutionEvent(
-                        execution_id=state["execution_id"],
-                        type=ExecutionEventType.VISUALIZATION_SELECTED,
-                        payload={
-                            "iteration": state["iteration"],
-                            "type": visualization.get("type"),
-                            "title": visualization.get("title"),
-                            "x": visualization.get("x"),
-                            "y": visualization.get("y"),
-                            "hue": visualization.get("hue"),
-                        },
-                    )
-                )
         except Exception as exc:
             failed = True
-            artifacts = {}
             content = _serialize_tool_message(ok=False, error=str(exc))
             await state["observer"].emit(
                 ExecutionEvent(
@@ -640,7 +595,7 @@ class LangGraphAgentProgram:
             content=content,
             failed=failed,
         )
-        return _ExternalToolCallResult(content=content, artifacts=artifacts)
+        return content
 
     async def _answer_node(self, state: AgentGraphState) -> dict[str, Any]:
         draft = state["answer"].strip()
@@ -766,21 +721,6 @@ async def _emit_phase(observer, execution_id: str, phase: ExecutionPhase) -> Non
             payload={"phase": phase.value},
         )
     )
-
-
-def _unwrap_tool_result(result: Any) -> tuple[Any, dict[str, dict[str, Any]]]:
-    if not isinstance(result, ToolInvocationResult):
-        return result, {}
-
-    artifacts: dict[str, dict[str, Any]] = {}
-    for artifact in result.artifacts:
-        kind = artifact.kind.strip()
-        if not kind:
-            raise ValueError("Tool artifact kind cannot be empty")
-        if kind in artifacts:
-            raise ValueError(f"Tool returned duplicate artifact kind: {kind}")
-        artifacts[kind] = dict(artifact.payload)
-    return result.observation, artifacts
 
 
 def _serialize_tool_message(
