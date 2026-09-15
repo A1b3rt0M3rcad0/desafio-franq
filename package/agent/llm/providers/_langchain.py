@@ -16,6 +16,7 @@ from package.agent.llm.models import (
     LLMToolDefinition,
 )
 from package.agent.llm.providers._messages import to_langchain_messages
+from package.agent.llm.realtime import current_text_delta_handler
 
 
 class LangChainLLMClient(LLMClient):
@@ -99,22 +100,56 @@ class LangChainLLMClient(LLMClient):
         tools: Sequence[LLMToolDefinition] = (),
     ) -> LLMResponse:
         normalized_messages = self._normalize_messages(messages)
+        langchain_messages = to_langchain_messages(normalized_messages)
         model = self._model
         if tools:
             model = model.bind_tools([_to_langchain_tool(tool) for tool in tools])
 
+        delta_handler = current_text_delta_handler() if tools else None
         try:
-            response = await model.ainvoke(to_langchain_messages(normalized_messages))
+            if delta_handler is not None:
+                response = await self._streaming_invoke(
+                    model,
+                    langchain_messages,
+                    delta_handler=delta_handler,
+                )
+            else:
+                response = await model.ainvoke(langchain_messages)
         except LLMProviderError:
             raise
         except Exception as exc:
             raise self._provider_error(exc) from exc
 
-        tool_calls = tuple(_to_llm_tool_call(call) for call in (response.tool_calls or []))
+        tool_calls = tuple(
+            _to_llm_tool_call(call)
+            for call in (getattr(response, "tool_calls", None) or [])
+        )
         return LLMResponse(
-            content=_extract_text(response.content),
+            content=_extract_text(getattr(response, "content", "")),
             tool_calls=tool_calls,
         )
+
+    async def _streaming_invoke(
+        self,
+        model: Any,
+        langchain_messages: Sequence[Any],
+        *,
+        delta_handler,
+    ) -> Any:
+        accumulated = None
+        async for message_chunk in model.astream(langchain_messages):
+            text = _extract_text(getattr(message_chunk, "content", ""))
+            if text:
+                await delta_handler(text)
+            accumulated = (
+                message_chunk
+                if accumulated is None
+                else accumulated + message_chunk
+            )
+
+        if accumulated is None:
+            raise RuntimeError("LLM stream completed without producing a response")
+        return accumulated
 
     async def stream(self, messages: Sequence[LLMMessage]) -> AsyncIterator[LLMChunk]:
         normalized_messages = self._normalize_messages(messages)
