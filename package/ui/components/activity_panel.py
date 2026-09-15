@@ -15,6 +15,25 @@ def activity_panel_storage_key(execution_id: str) -> str:
     return f"franq:execution:{execution_id}:activities-open"
 
 
+def activity_panel_marker(execution_id: str) -> str:
+    return render_asset(
+        "activity_panel_marker.html",
+        {"EXECUTION_ID": escape(execution_id, quote=True)},
+    )
+
+
+def build_activity_panel_script(execution_id: str) -> str:
+    return render_asset(
+        "activity_panel.js",
+        {
+            "EXECUTION_ID_JSON": json.dumps(execution_id).replace("<", "\\u003c").replace(
+                ">", "\\u003e"
+            ).replace("&", "\\u0026"),
+            "STORAGE_KEY_JSON": json.dumps(activity_panel_storage_key(execution_id)),
+        },
+    )
+
+
 def activity_from_mapping(value: dict[str, Any]) -> ActivityPresentation:
     return ActivityPresentation(
         sequence=value.get("sequence") if isinstance(value.get("sequence"), int) else None,
@@ -50,16 +69,14 @@ class ActivityPanel:
             key=f"activity_timeline_{execution_id}",
             gap="xxsmall",
         )
-        marker = render_asset(
-            "activity_panel_marker.html",
-            {"EXECUTION_ID": escape(execution_id, quote=True)},
-        )
-        self._activity_view.markdown(marker, unsafe_allow_html=True)
+        self._activity_view.markdown(activity_panel_marker(execution_id), unsafe_allow_html=True)
         inject_style_asset("activity_panel.css")
         mount_script_asset(
             "activity_panel.js",
             {
-                "EXECUTION_ID_JSON": json.dumps(execution_id),
+                "EXECUTION_ID_JSON": json.dumps(execution_id).replace("<", "\\u003c").replace(
+                    ">", "\\u003e"
+                ).replace("&", "\\u0026"),
                 "STORAGE_KEY_JSON": json.dumps(activity_panel_storage_key(execution_id)),
             },
         )
