@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from package.agent.database.models.outbox import OutboxMessage, OutboxStatus
@@ -30,6 +30,14 @@ class OutboxRepository:
         self._session.add(message)
         await self._session.flush()
         return message
+
+    async def delete_by_aggregate_ids(self, aggregate_ids: list[str]) -> None:
+        if not aggregate_ids:
+            return
+        await self._session.execute(
+            delete(OutboxMessage).where(OutboxMessage.aggregate_id.in_(aggregate_ids))
+        )
+        await self._session.flush()
 
     async def claim_batch(self, *, runner_id: str, limit: int) -> list[OutboxMessage]:
         now = _utc_now()
