@@ -22,16 +22,24 @@ def activity_panel_marker(execution_id: str) -> str:
     )
 
 
-def build_activity_panel_script(execution_id: str) -> str:
-    return render_asset(
-        "activity_panel.js",
-        {
-            "EXECUTION_ID_JSON": json.dumps(execution_id).replace("<", "\\u003c").replace(
-                ">", "\\u003e"
-            ).replace("&", "\\u0026"),
-            "STORAGE_KEY_JSON": json.dumps(activity_panel_storage_key(execution_id)),
-        },
+def _javascript_json(value: str) -> str:
+    return (
+        json.dumps(value)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
     )
+
+
+def _script_replacements(execution_id: str) -> dict[str, str]:
+    return {
+        "EXECUTION_ID_JSON": _javascript_json(execution_id),
+        "STORAGE_KEY_JSON": _javascript_json(activity_panel_storage_key(execution_id)),
+    }
+
+
+def build_activity_panel_script(execution_id: str) -> str:
+    return render_asset("activity_panel.js", _script_replacements(execution_id))
 
 
 def activity_from_mapping(value: dict[str, Any]) -> ActivityPresentation:
@@ -71,15 +79,7 @@ class ActivityPanel:
         )
         self._activity_view.markdown(activity_panel_marker(execution_id), unsafe_allow_html=True)
         inject_style_asset("activity_panel.css")
-        mount_script_asset(
-            "activity_panel.js",
-            {
-                "EXECUTION_ID_JSON": json.dumps(execution_id).replace("<", "\\u003c").replace(
-                    ">", "\\u003e"
-                ).replace("&", "\\u0026"),
-                "STORAGE_KEY_JSON": json.dumps(activity_panel_storage_key(execution_id)),
-            },
-        )
+        mount_script_asset("activity_panel.js", _script_replacements(execution_id))
         for activity in activities:
             self.append(activity)
 
