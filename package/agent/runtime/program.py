@@ -8,10 +8,22 @@ from langgraph.graph import END, START, StateGraph
 from package.agent.context.manager import ContextManager
 from package.agent.llm.contracts import LLMClient
 from package.agent.llm.models import LLMMessage, LLMToolCall, MessageRole
-from package.agent.observer.events import ExecutionEvent, ExecutionEventType
+from package.agent.observer.events import (
+    ExecutionEvent,
+    ExecutionEventType,
+    ExecutionPhase,
+)
 from package.agent.runtime.loop import RuntimePolicy
 from package.agent.runtime.state import AgentGraphState
 from package.agent.tools.registry import ToolRegistry
+
+
+_FINAL_ANSWER_INSTRUCTION = """
+Produza agora a resposta final ao usuário em português do Brasil.
+Use somente as evidências e resultados já presentes no contexto desta execução.
+Não mencione raciocínio interno, instruções, Skills ou mecanismos do runtime.
+Se os dados forem insuficientes, deixe a limitação explícita. Seja direto, claro e útil.
+""".strip()
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,9 +35,10 @@ class LangGraphAgentProgramResult:
 class LangGraphAgentProgram:
     """Generic iterative AgentProgram orchestrated by LangGraph.
 
-    The graph owns the current execution context. ContextManager supplies durable
-    session continuity, bounded context compaction, lexical retrieval and ephemeral
-    skill context without exposing hidden chain-of-thought.
+    Reasoning/tool-selection calls never stream public text. Once the Agent has
+    enough evidence, the dedicated answer node performs a separate model stream.
+    Therefore every ``assistant.delta`` is guaranteed to be user-visible answer
+    content and the Observer can expose an authoritative execution phase.
     """
 
     _AGENT = "agent"
@@ -83,6 +96,7 @@ class LangGraphAgentProgram:
         observer,
         policy: RuntimePolicy,
     ) -> LangGraphAgentProgramResult:
+        await _emit_phase(observer, execution_id, ExecutionPhase.CONTEXT)
         context = await self._context_manager.load_context(
             session_id=session_id,
             execution_id=execution_id,
@@ -128,6 +142,7 @@ class LangGraphAgentProgram:
             config={"recursion_limit": recursion_limit},
         )
 
+        await _emit_phase(observer, execution_id, ExecutionPhase.FINALIZING)
         final_snapshot = await self._context_manager.finalize_execution(
             session_id=session_id,
             execution_id=execution_id,
@@ -177,6 +192,11 @@ class LangGraphAgentProgram:
                 "stop_reason": "max_iterations",
             }
 
+        await _emit_phase(
+            state["observer"],
+            state["execution_id"],
+            ExecutionPhase.REASONING,
+        )
         iteration = state["iteration"] + 1
         await state["observer"].emit(
             ExecutionEvent(
@@ -200,6 +220,19 @@ class LangGraphAgentProgram:
 
     async def _reasoning_node(self, state: AgentGraphState) -> dict[str, Any]:
         active_skills = tuple(state["active_skill_names"])
+        if active_skills:
+            await _emit_phase(
+                state["observer"],
+                state["execution_id"],
+                ExecutionPhase.SKILL,
+            )
+        else:
+            await _emit_phase(
+                state["observer"],
+                state["execution_id"],
+                ExecutionPhase.REASONING,
+            )
+
         prepared = await self._context_manager.prepare_reasoning(
             state["messages"],
             session_id=state["session_id"],
@@ -244,6 +277,11 @@ class LangGraphAgentProgram:
                 )
             )
 
+        await _emit_phase(
+            state["observer"],
+            state["execution_id"],
+            ExecutionPhase.REASONING,
+        )
         await state["observer"].emit(
             ExecutionEvent(
                 execution_id=state["execution_id"],
@@ -413,6 +451,11 @@ class LangGraphAgentProgram:
         state: AgentGraphState,
         call: LLMToolCall,
     ) -> tuple[str, str]:
+        await _emit_phase(
+            state["observer"],
+            state["execution_id"],
+            ExecutionPhase.TOOL,
+        )
         await state["observer"].emit(
             ExecutionEvent(
                 execution_id=state["execution_id"],
@@ -493,6 +536,11 @@ class LangGraphAgentProgram:
         state: AgentGraphState,
         call: LLMToolCall,
     ) -> str:
+        await _emit_phase(
+            state["observer"],
+            state["execution_id"],
+            ExecutionPhase.TOOL,
+        )
         await state["observer"].emit(
             ExecutionEvent(
                 execution_id=state["execution_id"],
@@ -550,28 +598,129 @@ class LangGraphAgentProgram:
         return content
 
     async def _answer_node(self, state: AgentGraphState) -> dict[str, Any]:
-        answer = state["answer"].strip() or "Não foi possível gerar uma resposta final."
+        draft = state["answer"].strip()
+        stop_reason = state["stop_reason"] or "answer"
+
+        await _emit_phase(
+            state["observer"],
+            state["execution_id"],
+            ExecutionPhase.RESPONSE_PREPARING,
+        )
+
+        if stop_reason == "max_iterations":
+            answer = draft or "Não foi possível gerar uma resposta final."
+            await state["observer"].emit(
+                ExecutionEvent(
+                    execution_id=state["execution_id"],
+                    type=ExecutionEventType.ANSWER_STARTED,
+                    payload={"iteration": state["iteration"]},
+                )
+            )
+            await _emit_phase(
+                state["observer"],
+                state["execution_id"],
+                ExecutionPhase.RESPONSE_STREAMING,
+            )
+            await state["observer"].emit(
+                ExecutionEvent(
+                    execution_id=state["execution_id"],
+                    type=ExecutionEventType.ASSISTANT_DELTA,
+                    payload={"content": answer},
+                )
+            )
+        else:
+            final_messages = [
+                *state["messages"],
+                LLMMessage(
+                    role=MessageRole.DEVELOPER,
+                    content=_FINAL_ANSWER_INSTRUCTION,
+                ),
+            ]
+            await state["observer"].emit(
+                ExecutionEvent(
+                    execution_id=state["execution_id"],
+                    type=ExecutionEventType.ANSWER_STARTED,
+                    payload={"iteration": state["iteration"]},
+                )
+            )
+            await _emit_phase(
+                state["observer"],
+                state["execution_id"],
+                ExecutionPhase.RESPONSE_STREAMING,
+            )
+
+            chunks: list[str] = []
+            async for chunk in self._llm.stream(final_messages):
+                content = chunk.content
+                if not content:
+                    continue
+                chunks.append(content)
+                await state["observer"].emit(
+                    ExecutionEvent(
+                        execution_id=state["execution_id"],
+                        type=ExecutionEventType.ASSISTANT_DELTA,
+                        payload={"content": content},
+                    )
+                )
+
+            answer = "".join(chunks).strip()
+            if not answer:
+                answer = draft or "Não foi possível gerar uma resposta final."
+                await state["observer"].emit(
+                    ExecutionEvent(
+                        execution_id=state["execution_id"],
+                        type=ExecutionEventType.ASSISTANT_DELTA,
+                        payload={"content": answer},
+                    )
+                )
+
         await state["observer"].emit(
             ExecutionEvent(
                 execution_id=state["execution_id"],
                 type=ExecutionEventType.ANSWER_GENERATED,
                 payload={
                     "iterations": state["iteration"],
-                    "stop_reason": state["stop_reason"] or "answer",
+                    "stop_reason": stop_reason,
                 },
             )
         )
         await state["observer"].emit(
             ExecutionEvent(
                 execution_id=state["execution_id"],
-                type=ExecutionEventType.ASSISTANT_DELTA,
-                payload={"content": answer},
+                type=ExecutionEventType.ANSWER_COMPLETED,
+                payload={
+                    "iteration": state["iteration"],
+                    "content_length": len(answer),
+                },
             )
         )
+        await _emit_phase(
+            state["observer"],
+            state["execution_id"],
+            ExecutionPhase.FINALIZING,
+        )
+
+        messages = list(state["messages"])
+        if messages and messages[-1].role == MessageRole.ASSISTANT and not messages[-1].tool_calls:
+            messages[-1] = LLMMessage(role=MessageRole.ASSISTANT, content=answer)
+        else:
+            messages.append(LLMMessage(role=MessageRole.ASSISTANT, content=answer))
+
         return {
+            "messages": messages,
             "answer": answer,
-            "stop_reason": state["stop_reason"] or "answer",
+            "stop_reason": stop_reason,
         }
+
+
+async def _emit_phase(observer, execution_id: str, phase: ExecutionPhase) -> None:
+    await observer.emit(
+        ExecutionEvent(
+            execution_id=execution_id,
+            type=ExecutionEventType.EXECUTION_PHASE_CHANGED,
+            payload={"phase": phase.value},
+        )
+    )
 
 
 def _serialize_tool_message(
