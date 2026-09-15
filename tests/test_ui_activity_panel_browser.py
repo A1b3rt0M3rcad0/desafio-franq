@@ -45,8 +45,9 @@ def test_activity_panel_streams_incrementally_without_overlap(page) -> None:
         _wait_for_port("127.0.0.1", port)
         page.goto(f"http://127.0.0.1:{port}")
 
-        panel = page.locator('[data-franq-activity-panel="fixture-execution"]')
-        panel.wait_for(state="attached")
+        panels = page.locator('[data-franq-activity-panel="fixture-execution"]')
+        panels.first.wait_for(state="attached")
+        panel = panels.last
         panel.locator("summary").click()
         page.wait_for_timeout(150)
         assert panel.get_attribute("open") is not None
@@ -54,16 +55,23 @@ def test_activity_panel_streams_incrementally_without_overlap(page) -> None:
         page.get_by_role("button", name="Simular stream incremental").click()
         page.wait_for_function(
             """
-            () => document.querySelectorAll(
-              '[data-franq-activity-panel="fixture-execution"] .franq-activity-item'
-            ).length === 20
+            () => {
+              const panels = Array.from(document.querySelectorAll(
+                '[data-franq-activity-panel="fixture-execution"]'
+              ));
+              if (!panels.length) return false;
+              const current = panels[panels.length - 1];
+              return current.querySelectorAll('.franq-activity-item').length >= 20;
+            }
             """
         )
 
-        panel = page.locator('[data-franq-activity-panel="fixture-execution"]')
+        panels = page.locator('[data-franq-activity-panel="fixture-execution"]')
+        panel = panels.last
         panel.wait_for(state="attached")
         page.wait_for_timeout(150)
         assert panel.get_attribute("open") is not None
+        assert panel.locator(".franq-activity-item").count() == 20
 
         timeline = panel.locator('[data-franq-activity-scroll]')
         metrics = timeline.evaluate(
