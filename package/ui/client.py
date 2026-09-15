@@ -44,6 +44,14 @@ class FranqApiClient:
             json_body={"metadata": {"client": "streamlit"}},
         )
 
+    def list_sessions(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        if limit < 1:
+            raise ValueError("limit must be greater than zero")
+        payload = self._request_json("GET", f"/sessions?limit={limit}")
+        if not isinstance(payload, list):
+            raise ValueError("Expected the sessions endpoint to return a list")
+        return payload
+
     def get_session(self, session_id: str) -> dict[str, Any]:
         return self._request_json("GET", f"/sessions/{session_id}")
 
