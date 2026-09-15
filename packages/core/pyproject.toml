@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "desafio-franq-core"
+version = "0.1.0"
+description = "Core agent runtime and persistence for the Franq challenge"
+requires-python = ">=3.14"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["package.agent*"]
+namespaces = true
+
+[tool.setuptools.package-data]
+"package.agent.skills" = ["*/SKILL.md"]

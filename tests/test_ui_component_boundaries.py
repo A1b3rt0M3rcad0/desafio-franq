@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-_UI_ROOT = Path("package/ui")
+_UI_ROOT = Path("packages/ui/src/package/ui")
 _ASSET_ROOT = _UI_ROOT / "components" / "assets"
 
 

@@ -1,4 +1,4 @@
-from migrations.bootstrap import SchemaState, classify_schema
+from packages.core.migrations.bootstrap import SchemaState, classify_schema
 
 
 def test_empty_database_is_migrated_normally() -> None:

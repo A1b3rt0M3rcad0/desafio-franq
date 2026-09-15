@@ -14,7 +14,11 @@ def _imports(path: Path) -> set[str]:
 
 
 def test_package_dependency_boundaries() -> None:
-    root = Path("package")
+    roots = {
+        "agent": Path("packages/core/src/package/agent"),
+        "api": Path("packages/api/src/package/api"),
+        "runner": Path("packages/runner/src/package/runner"),
+    }
     violations: list[str] = []
 
     rules = {
@@ -24,7 +28,7 @@ def test_package_dependency_boundaries() -> None:
     }
 
     for package_name, forbidden in rules.items():
-        for path in (root / package_name).rglob("*.py"):
+        for path in roots[package_name].rglob("*.py"):
             for imported in _imports(path):
                 if imported.startswith(forbidden):
                     violations.append(f"{path}: {imported}")
