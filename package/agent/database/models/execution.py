@@ -11,8 +11,17 @@ from package.agent.database.models.base import Base, TimestampMixin, UUIDPrimary
 class ExecutionStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
+    CANCEL_REQUESTED = "cancel_requested"
+    CANCELLED = "cancelled"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+TERMINAL_EXECUTION_STATUSES = {
+    ExecutionStatus.CANCELLED.value,
+    ExecutionStatus.COMPLETED.value,
+    ExecutionStatus.FAILED.value,
+}
 
 
 class AgentExecution(UUIDPrimaryKeyMixin, TimestampMixin, Base):
