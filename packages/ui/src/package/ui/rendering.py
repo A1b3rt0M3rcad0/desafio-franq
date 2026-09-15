@@ -6,17 +6,43 @@ import pandas as pd
 import seaborn as sns
 import streamlit as st
 
+from package.ui.rich_content import (
+    InvalidVisualizationBlock,
+    MarkdownBlock,
+    PendingVisualizationBlock,
+    VisualizationBlock,
+    parse_rich_content,
+)
 from package.ui.visualization import PreparedVisualization, prepare_visualization
 
 
 _PLOT_LOCK = RLock()
 
 
-def render_result(result: dict[str, Any] | None) -> None:
-    visualization = prepare_visualization(result)
-    if visualization is None:
-        return
+def render_rich_content(content: str, *, allow_partial: bool = False) -> int:
+    rendered_visualizations = 0
+    for block in parse_rich_content(content, allow_partial=allow_partial):
+        if isinstance(block, MarkdownBlock):
+            if block.content.strip():
+                st.markdown(block.content)
+        elif isinstance(block, VisualizationBlock):
+            render_visualization(block.visualization)
+            rendered_visualizations += 1
+        elif isinstance(block, PendingVisualizationBlock):
+            st.caption("Preparando visualização...")
+        elif isinstance(block, InvalidVisualizationBlock):
+            st.caption("Não foi possível renderizar uma visualização desta resposta.")
+    return rendered_visualizations
 
+
+def render_result(result: dict[str, Any] | None) -> None:
+    """Backward-compatible renderer for the original result visualization contract."""
+    visualization = prepare_visualization(result)
+    if visualization is not None:
+        render_visualization(visualization)
+
+
+def render_visualization(visualization: PreparedVisualization) -> None:
     frame = pd.DataFrame(list(visualization.rows))
     if visualization.type == "table":
         if visualization.title:
