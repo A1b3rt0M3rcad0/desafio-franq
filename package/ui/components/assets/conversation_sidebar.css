@@ -1,14 +1,33 @@
+:root {
+  color-scheme: dark light;
+  --franq-text-color: #f5f5f5;
+  --franq-muted-color: #a7a9b0;
+  --franq-hover-bg: rgba(255, 255, 255, 0.07);
+  --franq-active-bg: rgba(255, 255, 255, 0.13);
+  --franq-active-border: rgba(255, 255, 255, 0.16);
+  --franq-accent: #ff4b4b;
+  --franq-menu-bg: #262730;
+  --franq-menu-border: rgba(255, 255, 255, 0.12);
+  --franq-danger: #ff6b6b;
+  --franq-danger-bg: rgba(255, 107, 107, 0.16);
+}
+
 html,
 body {
   margin: 0;
   padding: 0;
   background: transparent;
-  color: inherit;
+  color: var(--franq-text-color);
   font-family: "Source Sans Pro", sans-serif;
 }
 
 * {
   box-sizing: border-box;
+}
+
+button,
+input {
+  font-family: inherit;
 }
 
 .conversation-list {
@@ -26,23 +45,31 @@ body {
   height: 36px;
   display: flex;
   align-items: center;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 8px;
   padding: 0 10px;
   margin: 0 0 2px;
   background: transparent;
-  color: inherit;
+  color: var(--franq-text-color);
   cursor: pointer;
   text-align: left;
   font: inherit;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
 }
 
 .conversation-item:hover {
-  background: rgba(128, 128, 128, 0.14);
+  background: var(--franq-hover-bg);
 }
 
 .conversation-item.is-active {
-  background: rgba(128, 128, 128, 0.20);
+  background: var(--franq-active-bg);
+  border-color: var(--franq-active-border);
+  box-shadow: inset 3px 0 0 var(--franq-accent);
+  color: var(--franq-text-color);
+  font-weight: 600;
 }
 
 .conversation-item-title {
@@ -54,53 +81,100 @@ body {
   text-overflow: ellipsis;
   font-size: 14px;
   line-height: 1.2;
+  color: inherit;
 }
 
 .conversation-title-editor {
   width: 100%;
   min-width: 0;
   height: 28px;
-  border: 1px solid rgba(128, 128, 128, 0.45);
+  border: 1px solid var(--franq-active-border);
   border-radius: 6px;
   padding: 2px 6px;
-  background: rgba(128, 128, 128, 0.10);
-  color: inherit;
+  background: var(--franq-hover-bg);
+  color: var(--franq-text-color);
   outline: none;
   font: inherit;
   font-size: 14px;
 }
 
 .conversation-title-editor:focus {
-  border-color: rgba(128, 128, 128, 0.75);
+  border-color: var(--franq-accent);
 }
 
 .conversation-context-menu {
   position: fixed;
   z-index: 9999;
-  min-width: 120px;
-  padding: 4px;
-  border: 1px solid rgba(128, 128, 128, 0.35);
-  border-radius: 8px;
-  background: rgb(35, 36, 43);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  min-width: 164px;
+  max-width: 220px;
+  padding: 5px;
+  border: 1px solid var(--franq-menu-border);
+  border-radius: 9px;
+  background: var(--franq-menu-bg);
+  color: var(--franq-text-color);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.30);
 }
 
-.conversation-context-menu[hidden] {
+.conversation-context-menu[hidden],
+.conversation-delete-confirm[hidden],
+.conversation-context-actions[hidden] {
   display: none;
 }
 
-.conversation-context-menu button {
+.conversation-menu-action {
   width: 100%;
   border: 0;
   border-radius: 6px;
   padding: 8px 10px;
   background: transparent;
-  color: #ff6b6b;
+  color: var(--franq-text-color);
   cursor: pointer;
   text-align: left;
   font: inherit;
+  font-size: 13px;
 }
 
-.conversation-context-menu button:hover {
-  background: rgba(255, 107, 107, 0.12);
+.conversation-menu-action:hover {
+  background: var(--franq-hover-bg);
+}
+
+.conversation-menu-action-danger {
+  color: var(--franq-danger);
+}
+
+.conversation-menu-action-danger:hover {
+  background: var(--franq-danger-bg);
+}
+
+.conversation-delete-confirm-title {
+  padding: 7px 8px 8px;
+  color: var(--franq-text-color);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.conversation-delete-confirm-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.conversation-delete-confirm-actions .conversation-menu-action {
+  width: auto;
+  flex: 1 1 0;
+  text-align: center;
+}
+
+.conversation-menu-action-neutral {
+  color: var(--franq-text-color);
+  background: var(--franq-hover-bg);
+}
+
+.conversation-menu-action-danger-filled {
+  color: #ffffff;
+  background: #d63f49;
+}
+
+.conversation-menu-action-danger-filled:hover {
+  background: #e24a55;
 }
