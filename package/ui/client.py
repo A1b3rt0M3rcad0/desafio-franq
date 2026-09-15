@@ -14,9 +14,15 @@ class ObservedFrame:
     payload: dict[str, Any]
 
 
-class FranqApiError(httpx.HTTPError):
-    def __init__(self, *, status_code: int, detail: str, request: httpx.Request) -> None:
-        super().__init__(detail, request=request)
+class FranqApiError(httpx.HTTPStatusError):
+    """Concise API error that still participates in the httpx exception hierarchy."""
+
+    def __init__(self, *, status_code: int, detail: str, response: httpx.Response) -> None:
+        super().__init__(
+            detail,
+            request=response.request,
+            response=response,
+        )
         self.status_code = status_code
         self.detail = detail
 
@@ -94,7 +100,7 @@ class FranqApiClient:
                 raise FranqApiError(
                     status_code=response.status_code,
                     detail=detail,
-                    request=response.request,
+                    response=response,
                 )
             return response.json()
 
