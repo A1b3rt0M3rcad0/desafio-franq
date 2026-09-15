@@ -15,3 +15,6 @@ class ApiSettings(BaseSettings):
     redis_stream_maxlen: int
     redis_stream_read_block_ms: int
     redis_stream_read_count: int
+
+    observer_acceptance_poll_seconds: float
+    observer_projection_max_activities: int
