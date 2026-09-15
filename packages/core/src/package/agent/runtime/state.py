@@ -16,6 +16,7 @@ class AgentGraphState(TypedDict):
     tool_call_count: int
     skill_use_count: int
     max_parallel_tool_calls_per_tool: int
+    artifacts: dict[str, dict[str, Any]]
     answer: str
     stop_reason: str | None
     observer: ExecutionEventSink
