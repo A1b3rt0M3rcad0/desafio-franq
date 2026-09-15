@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -54,15 +55,27 @@ class FakeExecutionRepository:
         return self.state.execution if execution_id == self.state.execution.id else None
 
     async def mark_running(self, execution) -> None:
+        if execution.status == "cancel_requested":
+            return
         execution.status = "running"
         self.state.actions.append(("execution_running", execution.id))
 
+    async def mark_cancelled(self, execution, *, answer=None) -> None:
+        execution.status = "cancelled"
+        if answer is not None:
+            execution.answer = answer
+        self.state.actions.append(("execution_cancelled", execution.id, answer))
+
     async def mark_failed(self, execution, error: str) -> None:
+        if execution.status == "cancel_requested":
+            return
         execution.status = "failed"
         execution.error = error
         self.state.actions.append(("execution_failed", execution.id, error))
 
     async def mark_completed(self, execution, *, answer: str, result: dict) -> None:
+        if execution.status == "cancel_requested":
+            return
         execution.status = "completed"
         execution.answer = answer
         execution.result = result
@@ -126,8 +139,23 @@ class FakeRuntime:
         return self.result
 
 
+class BlockingRuntime:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.cancelled = False
+
+    async def run(self, *, execution_id: str, session_id: str, question: str):
+        del execution_id, session_id, question
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+
+
 class FakeRuntimeFactory:
-    def __init__(self, *, runtime: FakeRuntime | None = None, error: Exception | None = None):
+    def __init__(self, *, runtime=None, error: Exception | None = None):
         self.runtime = runtime
         self.error = error
         self.calls = 0
@@ -166,6 +194,7 @@ def _consumer(
         runner_id="runner-1",
         batch_size=10,
         max_attempts=max_attempts,
+        cancellation_poll_seconds=0.001,
         retry_policy=OutboxRetryPolicy(
             base_delay_seconds=2.0,
             max_delay_seconds=60.0,
@@ -308,3 +337,36 @@ async def test_success_marks_execution_completed_and_outbox_processed() -> None:
     assert state.execution.answer == "resposta"
     assert state.outbox.status == "processed"
     assert health.unavailable == []
+
+
+@pytest.mark.asyncio
+async def test_pending_cancelled_execution_never_starts_runtime() -> None:
+    state = State()
+    state.execution.status = "cancel_requested"
+    health = FakeHealthReporter()
+    factory = FakeRuntimeFactory(error=AssertionError("runtime must not start"))
+    consumer = _consumer(state, factory, health)
+
+    await consumer._handle_message(_message())
+
+    assert state.execution.status == "cancelled"
+    assert state.outbox.status == "processed"
+    assert factory.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_running_execution_cancellation_stops_runtime_task() -> None:
+    state = State()
+    health = FakeHealthReporter()
+    runtime = BlockingRuntime()
+    consumer = _consumer(state, FakeRuntimeFactory(runtime=runtime), health)
+
+    task = asyncio.create_task(consumer._handle_message(_message()))
+    await runtime.started.wait()
+    state.execution.status = "cancel_requested"
+    await asyncio.wait_for(task, timeout=1.0)
+
+    assert runtime.cancelled is True
+    assert state.execution.status == "cancelled"
+    assert state.outbox.status == "processed"
+    assert not any(action[0] == "outbox_failed" for action in state.actions)
