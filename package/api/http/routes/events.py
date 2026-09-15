@@ -5,7 +5,10 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
 from package.agent.observer.frames import ExecutionFrame
-from package.agent.observer.observer import RedisExecutionObserver
+from package.agent.observer.observer import (
+    ExecutionObservationGapError,
+    RedisExecutionObserver,
+)
 from package.api.http.dependencies import get_execution_observer
 
 router = APIRouter(prefix="/executions", tags=["events"])
@@ -22,6 +25,9 @@ async def stream_execution_events(
         await observer.current_state(execution_id, last_sequence=last_sequence)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Execution not found") from exc
+    except ExecutionObservationGapError:
+        # The streaming observer emits an explicit realtime-unavailable frame.
+        pass
 
     async def event_source() -> AsyncIterator[str]:
         async for frame in observer.observe(
