@@ -35,6 +35,20 @@ services:
       timeout: ${REDIS_HEALTHCHECK_TIMEOUT}
       retries: ${REDIS_HEALTHCHECK_RETRIES}
 
+  migrations:
+    build:
+      context: .
+      dockerfile: Dockerfile.migrations
+    image: desafio-franq-migrations:local
+    env_file:
+      - .env
+    environment:
+      AGENT_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:${POSTGRES_CONTAINER_PORT}/${POSTGRES_DB}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   api:
     <<: *python-service
     command:
@@ -54,6 +68,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
     healthcheck:
       test:
         - CMD

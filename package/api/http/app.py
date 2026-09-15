@@ -3,7 +3,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from package.agent.database.models import Base
 from package.api.http.dependencies import get_engine, get_redis, get_settings
 from package.api.http.routes.events import router as events_router
 from package.api.http.routes.executions import router as executions_router
@@ -13,11 +12,7 @@ from package.api.http.routes.trace import router as trace_router
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    settings = get_settings()
     engine = get_engine()
-    if settings.api_auto_create_schema:
-        async with engine.begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
     yield
     await get_redis().aclose()
     await engine.dispose()

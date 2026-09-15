@@ -5,7 +5,6 @@ class ApiSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     api_title: str
-    api_auto_create_schema: bool
 
     agent_database_url: str
 

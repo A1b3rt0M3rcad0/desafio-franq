@@ -16,6 +16,23 @@ from package.agent.database.models.context import (
     ContextSnapshotRecord,
     GlobalContextEntryRecord,
 )
+from package.agent.database.models.session import AgentSession
+
+
+async def _lock_session(session: AsyncSession, session_id: str) -> None:
+    """Serialize sequence allocation for all context records in one session.
+
+    Tool calls may finish concurrently. Locking the durable session row keeps the
+    short MAX(sequence) + 1 allocation section serializable without reducing tool
+    execution parallelism.
+    """
+    locked_session_id = await session.scalar(
+        select(AgentSession.id)
+        .where(AgentSession.id == session_id)
+        .with_for_update()
+    )
+    if locked_session_id is None:
+        raise ValueError(f"Session not found: {session_id}")
 
 
 class ContextSnapshotRepository:
@@ -42,6 +59,7 @@ class ContextSnapshotRepository:
         estimated_tokens: int,
     ) -> ContextSnapshot:
         async with self._session_factory() as session, session.begin():
+            await _lock_session(session, session_id)
             current = await session.scalar(
                 select(func.max(ContextSnapshotRecord.sequence)).where(
                     ContextSnapshotRecord.session_id == session_id
@@ -75,6 +93,7 @@ class GlobalContextRepository:
         metadata: dict[str, Any] | None = None,
     ) -> GlobalContextEntry:
         async with self._session_factory() as session, session.begin():
+            await _lock_session(session, session_id)
             current = await session.scalar(
                 select(func.max(GlobalContextEntryRecord.sequence)).where(
                     GlobalContextEntryRecord.session_id == session_id

@@ -9,6 +9,7 @@ description = "Agentic data assistant architecture for the Franq AI Engineer cha
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "alembic>=1.14.0",
     "asyncpg>=0.30.0",
     "deepseek-tokenizer>=0.3.0",
     "fastapi>=0.115.0",
@@ -19,6 +20,7 @@ dependencies = [
     "pandas>=2.3.0",
     "pydantic>=2.10.0",
     "pydantic-settings>=2.7.0",
+    "python-dotenv>=1.0.0",
     "redis>=5.2.0",
     "sqlalchemy>=2.0.36",
     "streamlit>=1.50.0",
