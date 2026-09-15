@@ -2,11 +2,11 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 
 from package.agent.llm.config import OpenAIConfig
-from package.agent.llm.providers._langgraph import LangGraphLLMClient
+from package.agent.llm.providers._langchain import LangChainLLMClient
 
 
-class OpenAILLM(LangGraphLLMClient):
-    """OpenAI implementation backed by ChatOpenAI and executed through LangGraph."""
+class OpenAILLM(LangChainLLMClient):
+    """OpenAI implementation backed by LangChain's ChatOpenAI adapter."""
 
     def __init__(
         self,
