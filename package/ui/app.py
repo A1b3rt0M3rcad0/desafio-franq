@@ -335,10 +335,6 @@ def main() -> None:
     if not question:
         return
 
-    st.session_state.messages.append({"role": "user", "content": question})
-    with st.chat_message("user"):
-        st.markdown(question)
-
     try:
         execution = client.create_execution(session_id=session_id, question=question)
     except httpx.HTTPError as exc:
@@ -347,6 +343,16 @@ def main() -> None:
         return
 
     execution_id = str(execution["id"])
+    st.session_state.messages.append(
+        {
+            "role": "user",
+            "content": question,
+            "execution_id": execution_id,
+        }
+    )
+    with st.chat_message("user"):
+        st.markdown(question)
+
     st.session_state.active_execution_id = execution_id
     st.session_state.last_sequence = None
     st.query_params["execution_id"] = execution_id
