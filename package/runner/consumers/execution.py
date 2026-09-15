@@ -10,6 +10,8 @@ from package.agent.database.models.outbox import OutboxMessage
 from package.agent.database.repositories.executions import ExecutionRepository
 from package.agent.database.repositories.outbox import OutboxRepository
 from package.agent.llm.errors import LLMProviderError
+from package.agent.observer.contracts import ExecutionEventSink
+from package.agent.observer.events import ExecutionEvent, ExecutionEventType
 from package.runner.contracts import RuntimeFactory
 from package.runner.runtime.health import RunnerHealthReporter
 from package.runner.runtime.retry import OutboxRetryPolicy
@@ -30,6 +32,7 @@ class ExecutionConsumer:
         cancellation_poll_seconds: float,
         retry_policy: OutboxRetryPolicy,
         health_reporter: RunnerHealthReporter,
+        event_sink: ExecutionEventSink | None = None,
     ) -> None:
         if max_attempts < 1:
             raise ValueError("max_attempts must be greater than zero")
@@ -43,6 +46,7 @@ class ExecutionConsumer:
         self._cancellation_poll_seconds = cancellation_poll_seconds
         self._retry_policy = retry_policy
         self._health_reporter = health_reporter
+        self._event_sink = event_sink
 
     async def consume_once(self) -> int:
         async with self._session_factory() as db:
@@ -93,10 +97,21 @@ class ExecutionConsumer:
                 if persisted_message is not None:
                     await OutboxRepository(db).mark_processed(persisted_message)
                 await db.commit()
+                await self._emit_lifecycle(
+                    execution_id,
+                    ExecutionEventType.EXECUTION_CANCELLED,
+                    {"reason": "user_requested"},
+                )
                 return
 
             await execution_repo.mark_running(execution)
             await db.commit()
+
+        await self._emit_lifecycle(
+            execution_id,
+            ExecutionEventType.EXECUTION_STARTED,
+            {"session_id": session_id},
+        )
 
         try:
             runtime = self._runtime_factory.create()
@@ -159,12 +174,19 @@ class ExecutionConsumer:
             )
             return
 
+        terminal_type = ExecutionEventType.EXECUTION_COMPLETED
+        terminal_payload = {"answer": result.answer, "result": result.result}
         async with self._session_factory() as db:
             execution_repo = ExecutionRepository(db)
             execution = await execution_repo.get(execution_id)
             if execution is not None:
                 if execution.status == ExecutionStatus.CANCEL_REQUESTED.value:
                     await execution_repo.mark_cancelled(execution, answer=result.answer)
+                    terminal_type = ExecutionEventType.EXECUTION_CANCELLED
+                    terminal_payload = {
+                        "reason": "user_requested",
+                        "partial_answer": result.answer,
+                    }
                 else:
                     await execution_repo.mark_completed(
                         execution,
@@ -175,6 +197,8 @@ class ExecutionConsumer:
             if persisted_message is not None:
                 await OutboxRepository(db).mark_processed(persisted_message)
             await db.commit()
+
+        await self._emit_lifecycle(execution_id, terminal_type, terminal_payload)
 
     async def _wait_for_cancellation(self, execution_id: str) -> bool:
         while True:
@@ -219,6 +243,11 @@ class ExecutionConsumer:
             if persisted_message is not None:
                 await OutboxRepository(db).mark_processed(persisted_message)
             await db.commit()
+        await self._emit_lifecycle(
+            execution_id,
+            ExecutionEventType.EXECUTION_CANCELLED,
+            {"reason": "user_requested"},
+        )
 
     async def _mark_terminal_failure(
         self,
@@ -241,6 +270,11 @@ class ExecutionConsumer:
                     error=internal_error or error,
                 )
             await db.commit()
+        await self._emit_lifecycle(
+            execution_id,
+            ExecutionEventType.EXECUTION_FAILED,
+            {"error": error},
+        )
 
     async def _mark_processed(self, message_id: str) -> None:
         async with self._session_factory() as db:
@@ -248,6 +282,29 @@ class ExecutionConsumer:
             if message is not None:
                 await OutboxRepository(db).mark_processed(message)
                 await db.commit()
+
+    async def _emit_lifecycle(
+        self,
+        execution_id: str,
+        event_type: ExecutionEventType,
+        payload: dict,
+    ) -> None:
+        if self._event_sink is None:
+            return
+        try:
+            await self._event_sink.emit(
+                ExecutionEvent(
+                    execution_id=execution_id,
+                    type=event_type,
+                    payload=payload,
+                )
+            )
+        except Exception:
+            logger.exception(
+                "Failed to publish lifecycle event %s for execution %s",
+                event_type.value,
+                execution_id,
+            )
 
 
 def _public_execution_error(exc: Exception) -> str:
