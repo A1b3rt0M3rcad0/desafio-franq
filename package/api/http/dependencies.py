@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from package.agent.cache.connection import create_redis_connection
 from package.agent.cache.event_stream import ExecutionEventStream
 from package.agent.cache.execution_state import ExecutionHotState
+from package.agent.cache.runner_health import RunnerHealthStore
 from package.agent.database.config.connection import create_session_factory
 from package.agent.database.config.engine import create_agent_database_engine
 from package.agent.observer.durable import DatabaseExecutionStateReader
@@ -51,6 +52,15 @@ def get_hot_state() -> ExecutionHotState:
         get_redis(),
         key_prefix=settings.redis_key_prefix,
         ttl_seconds=settings.execution_hot_state_ttl_seconds,
+    )
+
+
+def get_runner_health() -> RunnerHealthStore:
+    settings = get_settings()
+    return RunnerHealthStore(
+        get_redis(),
+        key_prefix=settings.redis_key_prefix,
+        ttl_seconds=settings.runner_health_ttl_seconds,
     )
 
 

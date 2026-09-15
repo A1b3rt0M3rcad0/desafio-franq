@@ -2,10 +2,15 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from package.agent.cache.execution_state import ExecutionHotState
+from package.agent.cache.runner_health import RunnerHealthStore
 from package.agent.database.repositories.executions import ExecutionRepository
 from package.agent.database.repositories.outbox import OutboxRepository
 from package.agent.database.repositories.sessions import SessionRepository
-from package.api.http.dependencies import get_hot_state, get_session_factory
+from package.api.http.dependencies import (
+    get_hot_state,
+    get_runner_health,
+    get_session_factory,
+)
 from package.api.http.schemas.execution import CreateExecutionRequest, ExecutionResponse
 from package.api.presentation.execution import present_execution
 
@@ -36,10 +41,20 @@ async def create_execution(
     session_id: str,
     request: CreateExecutionRequest,
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
+    runner_health: RunnerHealthStore = Depends(get_runner_health),
 ) -> ExecutionResponse:
     async with session_factory() as db:
         if await SessionRepository(db).get(session_id) is None:
             raise HTTPException(status_code=404, detail="Session not found")
+
+        if not await runner_health.any_ready():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Agente indisponível: nenhum Runner está conectado a um "
+                    "provider LLM válido. Verifique a configuração do provider."
+                ),
+            )
 
         execution = await ExecutionRepository(db).create(session_id, request.question)
         await OutboxRepository(db).enqueue(

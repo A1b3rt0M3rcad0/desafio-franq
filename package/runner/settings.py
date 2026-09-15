@@ -62,8 +62,11 @@ class RunnerSettings(EnvSettings):
     observer_projection_max_activities: int
 
     runner_id: str
+    runner_health_ttl_seconds: int = 15
+    runner_health_heartbeat_seconds: float = 5.0
     outbox_poll_interval_seconds: float
     outbox_batch_size: int
+    outbox_max_attempts: int = 3
     outbox_retry_base_delay_seconds: float
     outbox_retry_max_delay_seconds: float
     outbox_retry_exponent_cap: int

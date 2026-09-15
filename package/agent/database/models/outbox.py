@@ -12,6 +12,7 @@ class OutboxStatus(StrEnum):
     PENDING = "pending"
     PROCESSING = "processing"
     PROCESSED = "processed"
+    FAILED = "failed"
 
 
 class OutboxMessage(UUIDPrimaryKeyMixin, Base):

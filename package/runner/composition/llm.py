@@ -11,9 +11,12 @@ from package.runner.settings import (
 def compose_llm(settings: RunnerSettings) -> LLMClient:
     if settings.llm_provider == LLMProvider.OPENAI:
         provider = OpenAIProviderSettings()
+        api_key = provider.openai_api_key.get_secret_value().strip()
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY is not configured")
         return OpenAILLM(
             OpenAIConfig(
-                api_key=provider.openai_api_key.get_secret_value(),
+                api_key=api_key,
                 base_url=provider.openai_base_url,
                 model=provider.openai_model,
                 timeout_seconds=provider.openai_timeout_seconds,
@@ -26,9 +29,12 @@ def compose_llm(settings: RunnerSettings) -> LLMClient:
 
     if settings.llm_provider == LLMProvider.DEEPSEEK:
         provider = DeepSeekProviderSettings()
+        api_key = provider.deepseek_api_key.get_secret_value().strip()
+        if not api_key:
+            raise ValueError("DEEPSEEK_API_KEY is not configured")
         return DeepSeekLLM(
             DeepSeekConfig(
-                api_key=provider.deepseek_api_key.get_secret_value(),
+                api_key=api_key,
                 base_url=provider.deepseek_base_url,
                 model=provider.deepseek_model,
                 timeout_seconds=provider.deepseek_timeout_seconds,

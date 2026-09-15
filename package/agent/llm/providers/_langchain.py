@@ -6,6 +6,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 
 from package.agent.llm.config import LLMProvider
 from package.agent.llm.contracts import LLMClient
+from package.agent.llm.errors import LLMProviderError, classify_provider_exception
 from package.agent.llm.models import (
     LLMChunk,
     LLMMessage,
@@ -97,7 +98,13 @@ class LangChainLLMClient(LLMClient):
         if tools:
             model = model.bind_tools([_to_langchain_tool(tool) for tool in tools])
 
-        response = await model.ainvoke(to_langchain_messages(normalized_messages))
+        try:
+            response = await model.ainvoke(to_langchain_messages(normalized_messages))
+        except LLMProviderError:
+            raise
+        except Exception as exc:
+            raise self._provider_error(exc) from exc
+
         tool_calls = tuple(_to_llm_tool_call(call) for call in (response.tool_calls or []))
         return LLMResponse(
             content=_extract_text(response.content),
@@ -107,10 +114,25 @@ class LangChainLLMClient(LLMClient):
     async def stream(self, messages: Sequence[LLMMessage]) -> AsyncIterator[LLMChunk]:
         normalized_messages = self._normalize_messages(messages)
         langchain_messages = to_langchain_messages(normalized_messages)
-        async for message_chunk in self._model.astream(langchain_messages):
-            text = _extract_text(message_chunk.content)
-            if text:
-                yield LLMChunk(content=text)
+        try:
+            async for message_chunk in self._model.astream(langchain_messages):
+                text = _extract_text(message_chunk.content)
+                if text:
+                    yield LLMChunk(content=text)
+        except LLMProviderError:
+            raise
+        except Exception as exc:
+            raise self._provider_error(exc) from exc
+
+    def _provider_error(self, exc: Exception) -> LLMProviderError:
+        failure = classify_provider_exception(exc)
+        return LLMProviderError(
+            provider=self._provider.value,
+            model=self._model_name,
+            message=str(exc) or exc.__class__.__name__,
+            retryable=failure.retryable,
+            status_code=failure.status_code,
+        )
 
     @staticmethod
     def _normalize_messages(messages: Sequence[LLMMessage]) -> list[LLMMessage]:

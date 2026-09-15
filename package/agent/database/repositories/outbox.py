@@ -59,6 +59,14 @@ class OutboxRepository:
         message.locked_by = None
         await self._session.flush()
 
+    async def mark_failed(self, message: OutboxMessage, *, error: str) -> None:
+        message.status = OutboxStatus.FAILED.value
+        message.last_error = error[:1000]
+        message.processed_at = _utc_now()
+        message.locked_at = None
+        message.locked_by = None
+        await self._session.flush()
+
     async def release_with_error(
         self,
         message: OutboxMessage,

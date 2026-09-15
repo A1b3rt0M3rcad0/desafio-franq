@@ -82,8 +82,29 @@ class FranqApiClient:
             timeout=self._timeout_seconds,
         ) as client:
             response = client.request(method, path, json=json_body)
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                detail = _response_detail(response)
+                if detail:
+                    raise httpx.HTTPStatusError(
+                        f"{exc}. {detail}",
+                        request=exc.request,
+                        response=exc.response,
+                    ) from exc
+                raise
             return response.json()
+
+
+def _response_detail(response: httpx.Response) -> str | None:
+    try:
+        payload = response.json()
+    except (ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    detail = payload.get("detail")
+    return str(detail) if detail else None
 
 
 def parse_sse_frames(lines: Iterable[str]) -> Iterator[ObservedFrame]:
