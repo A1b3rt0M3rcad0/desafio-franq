@@ -1,24 +1,61 @@
 from package.ui.components.activity_panel import (
     ACTIVITY_PANEL_HEIGHT_PX,
-    activity_panel_marker,
     activity_panel_storage_key,
     build_activity_panel_script,
+    render_activity_panel_html,
 )
-from package.ui.components.assets import load_asset
+from package.ui.components.assets import render_asset
+from package.ui.observation import ActivityPresentation
+
+
+def _activity(
+    sequence: int,
+    *,
+    title: str = "Atividade",
+    detail: str | None = None,
+    event_type: str = "tool.completed",
+    status: str = "success",
+) -> ActivityPresentation:
+    return ActivityPresentation(
+        sequence=sequence,
+        event_type=event_type,
+        title=title,
+        detail=detail,
+        status=status,
+    )
 
 
 def test_activity_panel_uses_compact_fixed_height() -> None:
     assert 140 <= ACTIVITY_PANEL_HEIGHT_PX <= 180
 
 
-def test_activity_panel_marker_escapes_execution_id() -> None:
-    marker = activity_panel_marker('execution-<1>"')
+def test_activity_panel_renders_one_owned_html_tree_and_escapes_content() -> None:
+    html = render_activity_panel_html(
+        execution_id='execution-<1>"',
+        label="Analisando <dados>",
+        state="running",
+        activities=[
+            _activity(1, title="Consulta <1>", detail="resultado & detalhe"),
+            _activity(
+                2,
+                title="SQL",
+                detail="SELECT * FROM compras WHERE categoria = '<x>'",
+                event_type="sql.generated",
+            ),
+        ],
+    )
 
-    assert 'data-franq-activity-panel="execution-&lt;1&gt;&quot;"' in marker
-    assert "display:none" in marker
+    assert 'data-franq-activity-panel="execution-&lt;1&gt;&quot;"' in html
+    assert "Analisando &lt;dados&gt;" in html
+    assert "Consulta &lt;1&gt;" in html
+    assert "resultado &amp; detalhe" in html
+    assert "&lt;x&gt;" in html
+    assert html.count("franq-activity-item franq-activity-item--") == 2
+    assert 'data-franq-activity-scroll' in html
+    assert "stVerticalBlock" not in html
 
 
-def test_activity_panel_script_preserves_expansion_and_tracks_latest_action() -> None:
+def test_activity_panel_script_preserves_expansion_and_scroll_across_replacement() -> None:
     execution_id = "execution-1"
     script = build_activity_panel_script(execution_id)
 
@@ -27,33 +64,35 @@ def test_activity_panel_script_preserves_expansion_and_tracks_latest_action() ->
     assert "persistUserIntent" in script
     assert "desiredOpen" in script
     assert "restoreDesiredOpenState" in script
-    assert "attributeFilter: ['open']" in script
     assert "MutationObserver" in script
-    assert "scrollHeight" in script
+    assert "savedScrollTop" in script
     assert "distanceFromBottom" in script
     assert "pinned" in script
-    assert "franq-activity-timeline" in script
+    assert "[data-franq-activity-scroll]" in script
 
 
-def test_activity_panel_does_not_mutate_streamlit_layout_contract() -> None:
+def test_activity_panel_script_never_mutates_layout_styles() -> None:
     script = build_activity_panel_script("execution-1")
 
-    assert "findVerticalScrollContainer" in script
-    assert "getComputedStyle" in script
     assert "style.setProperty" not in script
-    assert "max-height" not in script
-    assert "overflow-y" not in script
-    assert "overflow-x" not in script
+    assert "getComputedStyle" not in script
     assert "stVerticalBlockBorderWrapper" not in script
+    assert "stVerticalBlock" not in script
 
 
-def test_activity_panel_css_only_styles_content_not_layout_wrappers() -> None:
-    css = load_asset("activity_panel.css")
+def test_activity_panel_css_owns_vertical_scroll_without_streamlit_selectors() -> None:
+    css = render_asset(
+        "activity_panel.css",
+        {"PANEL_HEIGHT_PX": str(ACTIVITY_PANEL_HEIGHT_PX)},
+    )
 
-    assert ".franq-activity-timeline *" not in css
-    assert "stVerticalBlockBorderWrapper" not in css
-    assert "white-space: pre-wrap" in css
+    assert f"max-height: {ACTIVITY_PANEL_HEIGHT_PX}px" in css
+    assert "overflow-y: auto" in css
     assert "overflow-x: hidden" in css
+    assert "display: flex" in css
+    assert "flex-direction: column" in css
+    assert "data-testid" not in css
+    assert "stVerticalBlock" not in css
 
 
 def test_activity_panel_script_escapes_script_breakout_characters() -> None:
