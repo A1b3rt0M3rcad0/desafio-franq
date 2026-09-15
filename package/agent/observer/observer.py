@@ -76,6 +76,16 @@ class RedisExecutionObserver:
         yield state_frame
         if self._is_terminal_state(state_frame):
             return
+        if cursor is None and state_frame.payload.get("realtime_reason") in {
+            "hot_state_unavailable",
+            "stream_unavailable",
+        }:
+            yield self._realtime_unavailable(
+                execution_id,
+                reason=str(state_frame.payload["realtime_reason"]),
+                detail="Realtime observation is unavailable; durable state remains authoritative.",
+            )
+            return
 
         while cursor is None:
             await asyncio.sleep(self._acceptance_poll_seconds)
@@ -94,6 +104,19 @@ class RedisExecutionObserver:
 
             if self._is_terminal_state(candidate):
                 yield candidate
+                return
+            if candidate.payload.get("realtime_reason") in {
+                "hot_state_unavailable",
+                "stream_unavailable",
+            }:
+                yield candidate
+                yield self._realtime_unavailable(
+                    execution_id,
+                    reason=str(candidate.payload["realtime_reason"]),
+                    detail=(
+                        "Realtime observation is unavailable; durable state remains authoritative."
+                    ),
+                )
                 return
             if candidate.payload.get("realtime_available"):
                 state_frame = candidate
@@ -149,11 +172,13 @@ class RedisExecutionObserver:
         if durable is None:
             raise KeyError(execution_id)
 
-        hot = await self._hot_state.get(execution_id)
-        if hot is None:
+        try:
+            hot = await self._hot_state.get(execution_id)
+        except Exception:
             projection = initial_projection(execution_id, durable)
             payload = public_projection(projection, realtime_available=False)
             payload["sequence"] = None
+            payload["realtime_reason"] = "hot_state_unavailable"
             if last_sequence is not None:
                 payload["reattached_from_sequence"] = last_sequence
             return (
@@ -166,10 +191,32 @@ class RedisExecutionObserver:
                 None,
             )
 
-        latest = await self._event_stream.latest(execution_id)
+        if hot is None:
+            projection = initial_projection(execution_id, durable)
+            payload = public_projection(projection, realtime_available=False)
+            payload["sequence"] = None
+            payload["realtime_reason"] = "awaiting_runtime"
+            if last_sequence is not None:
+                payload["reattached_from_sequence"] = last_sequence
+            return (
+                ExecutionFrame(
+                    execution_id=execution_id,
+                    type=EXECUTION_STATE_FRAME,
+                    sequence=None,
+                    payload=payload,
+                ),
+                None,
+            )
+
+        try:
+            latest = await self._event_stream.latest(execution_id)
+        except Exception:
+            latest = None
+
         if latest is None:
             projection = {**initial_projection(execution_id, durable), **hot}
             payload = public_projection(projection, realtime_available=False)
+            payload["realtime_reason"] = "stream_unavailable"
             sequence = _projection_sequence(projection) or None
             if last_sequence is not None:
                 payload["reattached_from_sequence"] = last_sequence
@@ -188,7 +235,20 @@ class RedisExecutionObserver:
         projection_sequence = _projection_sequence(projection)
 
         if projection_sequence < high_watermark:
-            retained = await self._event_stream.retained(execution_id)
+            try:
+                retained = await self._event_stream.retained(execution_id)
+            except Exception:
+                payload = public_projection(projection, realtime_available=False)
+                payload["realtime_reason"] = "stream_unavailable"
+                return (
+                    ExecutionFrame(
+                        execution_id=execution_id,
+                        type=EXECUTION_STATE_FRAME,
+                        sequence=projection_sequence or None,
+                        payload=payload,
+                    ),
+                    None,
+                )
             relevant = [
                 event
                 for event in retained
@@ -221,6 +281,7 @@ class RedisExecutionObserver:
                 )
         elif projection_sequence > high_watermark:
             payload = public_projection(projection, realtime_available=False)
+            payload["realtime_reason"] = "stream_unavailable"
             if last_sequence is not None:
                 payload["reattached_from_sequence"] = last_sequence
             return (
