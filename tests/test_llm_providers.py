@@ -31,11 +31,11 @@ def _openai_config() -> OpenAIConfig:
     )
 
 
-def _deepseek_config() -> DeepSeekConfig:
+def _deepseek_config(model: str = "deepseek-test") -> DeepSeekConfig:
     return DeepSeekConfig(
         api_key="test-key",
         base_url="https://api.deepseek.test/v1",
-        model="deepseek-test",
+        model=model,
         timeout_seconds=30.0,
         max_output_tokens=512,
         max_retries=2,
@@ -115,6 +115,35 @@ def test_llm_profile_comes_from_active_model_profile() -> None:
     assert llm.profile.provider == "openai"
     assert llm.profile.model == "gpt-test"
     assert llm.profile.context_window_tokens == 123_456
+
+
+def test_deepseek_profile_prefers_langchain_model_profile() -> None:
+    model = CountingFakeChatModel(
+        messages=iter(["unused"]),
+        profile={"max_input_tokens": 321_000},
+    )
+    llm = DeepSeekLLM(_deepseek_config("deepseek-flash"), model=model)
+
+    assert llm.profile.provider == "deepseek"
+    assert llm.profile.model == "deepseek-flash"
+    assert llm.profile.context_window_tokens == 321_000
+
+
+def test_deepseek_profile_uses_provider_fallback_when_adapter_has_no_profile() -> None:
+    model = GenericFakeChatModel(messages=iter(["unused"]))
+    llm = DeepSeekLLM(_deepseek_config("deepseek-flash"), model=model)
+
+    assert llm.profile.provider == "deepseek"
+    assert llm.profile.model == "deepseek-flash"
+    assert llm.profile.context_window_tokens == 1_000_000
+
+
+def test_deepseek_unknown_model_without_profile_still_fails_fast() -> None:
+    model = GenericFakeChatModel(messages=iter(["unused"]))
+    llm = DeepSeekLLM(_deepseek_config("deepseek-unknown"), model=model)
+
+    with pytest.raises(RuntimeError, match="max_input_tokens"):
+        _ = llm.profile
 
 
 def test_llm_token_count_is_delegated_to_model_tokenizer() -> None:
