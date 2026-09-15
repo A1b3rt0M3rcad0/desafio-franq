@@ -9,6 +9,22 @@ from package.agent.tools.database.inspector import SQLiteSchemaInspector
 class DatabaseTool:
     name = "database"
     description = "Inspect the user database schema and execute read-only analytical SQL queries."
+    input_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["inspect_schema", "query"],
+                "description": "Inspect the schema or execute a read-only analytical query.",
+            },
+            "sql": {
+                "type": "string",
+                "description": "SQL query. Required when action is query.",
+            },
+        },
+        "required": ["action"],
+        "additionalProperties": False,
+    }
 
     def __init__(
         self,

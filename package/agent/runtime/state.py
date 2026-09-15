@@ -1,12 +1,19 @@
-from typing import Any
+from typing import Any, TypedDict
 
-from pydantic import BaseModel, Field
+from package.agent.llm.models import LLMMessage, LLMToolCall
+from package.agent.observer.contracts import ExecutionObserver
 
 
-class RuntimeState(BaseModel):
+class AgentGraphState(TypedDict):
     execution_id: str
     session_id: str
     question: str
-    answer: str = ""
-    step: str = "created"
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    messages: list[LLMMessage]
+    iteration: int
+    max_iterations: int
+    pending_tool_calls: list[LLMToolCall]
+    tool_call_count: int
+    answer: str
+    stop_reason: str | None
+    observer: ExecutionObserver
+    metadata: dict[str, Any]

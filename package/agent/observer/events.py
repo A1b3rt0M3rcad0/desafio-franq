@@ -9,6 +9,10 @@ class ExecutionEventType(StrEnum):
     EXECUTION_STARTED = "execution.started"
     EXECUTION_COMPLETED = "execution.completed"
     EXECUTION_FAILED = "execution.failed"
+    AGENT_ITERATION_STARTED = "agent.iteration.started"
+    AGENT_DECISION = "agent.decision"
+    AGENT_MAX_ITERATIONS_REACHED = "agent.max_iterations_reached"
+    ANSWER_GENERATED = "answer.generated"
     CONTEXT_LOADED = "context.loaded"
     SCHEMA_INSPECTED = "schema.inspected"
     PLAN_CREATED = "plan.created"
@@ -27,6 +31,10 @@ TRACEABLE_EVENT_TYPES = {
     ExecutionEventType.EXECUTION_STARTED,
     ExecutionEventType.EXECUTION_COMPLETED,
     ExecutionEventType.EXECUTION_FAILED,
+    ExecutionEventType.AGENT_ITERATION_STARTED,
+    ExecutionEventType.AGENT_DECISION,
+    ExecutionEventType.AGENT_MAX_ITERATIONS_REACHED,
+    ExecutionEventType.ANSWER_GENERATED,
     ExecutionEventType.CONTEXT_LOADED,
     ExecutionEventType.SCHEMA_INSPECTED,
     ExecutionEventType.PLAN_CREATED,
