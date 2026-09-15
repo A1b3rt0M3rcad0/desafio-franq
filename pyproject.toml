@@ -40,6 +40,7 @@ exclude = ["data*", "tests*"]
 
 [tool.setuptools.package-data]
 "package.agent.skills" = ["*/SKILL.md"]
+"package.ui.components" = ["assets/*.html", "assets/*.css", "assets/*.js"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
