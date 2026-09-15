@@ -4,6 +4,11 @@ from typing import Any
 import httpx
 import streamlit as st
 
+from package.ui.activity_panel import (
+    ACTIVITY_PANEL_HEIGHT_PX,
+    activity_panel_marker,
+    mount_activity_panel_behavior,
+)
 from package.ui.client import FranqApiClient
 from package.ui.composer import render_chat_composer
 from package.ui.observation import (
@@ -285,20 +290,30 @@ def _activity_from_state(value: dict[str, Any]) -> ActivityPresentation:
     )
 
 
-def _render_activity(status_view, activity: ActivityPresentation) -> None:
+def _latest_activity(active: dict[str, Any]) -> ActivityPresentation | None:
+    activities = active.get("activities")
+    if not isinstance(activities, list):
+        return None
+    for stored in reversed(activities):
+        if isinstance(stored, dict):
+            return _activity_from_state(stored)
+    return None
+
+
+def _render_activity(activity_view, activity: ActivityPresentation) -> None:
     icon = {
         "running": "◌",
         "success": "✓",
         "error": "✕",
         "info": "•",
     }.get(activity.status, "•")
-    status_view.markdown(f"{icon} **{activity.title}**")
+    activity_view.markdown(f"{icon} **{activity.title}**")
     if not activity.detail:
         return
     if activity.event_type == "sql.generated" or "SELECT " in activity.detail.upper():
-        status_view.code(activity.detail, language="sql")
+        activity_view.code(activity.detail, language="sql")
     else:
-        status_view.caption(activity.detail)
+        activity_view.caption(activity.detail)
 
 
 def _running_status_label(active: dict[str, Any], latest: ActivityPresentation | None = None) -> str:
@@ -323,13 +338,24 @@ def _observe_execution(
         with st.chat_message("assistant"):
             response_started = bool(active.get("response_started"))
             status_view = st.status(
-                _running_status_label(active),
+                _running_status_label(active, _latest_activity(active)),
                 expanded=False,
                 state="complete" if response_started else "running",
             )
+            activity_view = status_view.container(
+                height=ACTIVITY_PANEL_HEIGHT_PX,
+                border=False,
+                key=f"activity_timeline_{execution_id}",
+                gap="xxsmall",
+            )
+            activity_view.markdown(
+                activity_panel_marker(execution_id),
+                unsafe_allow_html=True,
+            )
+            mount_activity_panel_behavior(execution_id)
             for stored in active.get("activities", []):
                 if isinstance(stored, dict):
-                    _render_activity(status_view, _activity_from_state(stored))
+                    _render_activity(activity_view, _activity_from_state(stored))
 
             message_view = st.empty()
             if active.get("content"):
@@ -347,7 +373,7 @@ def _observe_execution(
                     latest_activity: ActivityPresentation | None = None
                     for activity in update.new_activities:
                         latest_activity = activity
-                        _render_activity(status_view, activity)
+                        _render_activity(activity_view, activity)
 
                     if update.content_changed:
                         message_view.markdown(str(active.get("content") or ""))
@@ -363,7 +389,6 @@ def _observe_execution(
                         status_view.update(
                             label="Análise concluída",
                             state="complete",
-                            expanded=False,
                         )
                     elif update.terminal_status == "failed":
                         status_view.update(label="Falha na execução", state="error")
@@ -436,7 +461,6 @@ def _observe_execution(
                         status_view.update(
                             label="Análise concluída",
                             state="complete",
-                            expanded=False,
                         )
                     return False
 
@@ -446,7 +470,7 @@ def _observe_execution(
                 )
                 message_view.markdown(final_answer)
                 render_result(active.get("result"))
-                status_view.update(label="Concluído", state="complete", expanded=False)
+                status_view.update(label="Concluído", state="complete")
                 st.session_state.messages.append(
                     {
                         "role": "assistant",
@@ -463,7 +487,7 @@ def _observe_execution(
                 if partial:
                     message_view.markdown(partial)
                 st.caption("Resposta interrompida pelo usuário.")
-                status_view.update(label="Interrompido", state="complete", expanded=False)
+                status_view.update(label="Interrompido", state="complete")
                 st.session_state.messages.append(
                     {
                         "role": "assistant",
@@ -482,7 +506,7 @@ def _observe_execution(
                     f"{active.get('error') or 'erro desconhecido'}"
                 )
                 st.error(final_error)
-                status_view.update(label="Falha na execução", state="error", expanded=True)
+                status_view.update(label="Falha na execução", state="error")
                 st.session_state.messages.append(
                     {
                         "role": "assistant",
