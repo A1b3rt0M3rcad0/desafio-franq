@@ -1,6 +1,9 @@
 from pathlib import Path
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from package.agent.llm.config import LLMProvider, ReasoningEffort
 
 
 class RunnerSettings(BaseSettings):
@@ -20,6 +23,15 @@ class RunnerSettings(BaseSettings):
     user_database_query_timeout_seconds: float
     user_database_max_rows: int
     user_database_progress_handler_steps: int
+
+    llm_provider: LLMProvider
+    openai_api_key: SecretStr
+    openai_base_url: str
+    openai_model: str
+    openai_timeout_seconds: float
+    openai_max_output_tokens: int
+    openai_reasoning_effort: ReasoningEffort
+    openai_store: bool
 
     agent_runtime_max_iterations: int
     agent_runtime_max_sql_retries: int
