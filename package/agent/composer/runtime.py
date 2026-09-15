@@ -23,7 +23,7 @@ def compose_agent_program(
 def compose_runtime(
     *,
     program: LangGraphAgentProgram,
-    observer: ExecutionEventSink,
+    event_sink: ExecutionEventSink,
     policy: RuntimePolicy,
 ) -> AgentRuntime:
-    return AgentRuntime(program=program, observer=observer, policy=policy)
+    return AgentRuntime(program=program, event_sink=event_sink, policy=policy)
