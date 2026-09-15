@@ -1,9 +1,9 @@
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from package.agent.context.budget import (
-    ApproximateTokenEstimator,
     ContextBudgetManager,
     ContextBudgetPolicy,
+    ModelTokenEstimator,
 )
 from package.agent.context.builder import ContextBuilder
 from package.agent.context.manager import ContextManager
@@ -23,19 +23,18 @@ def compose_context_manager(
     llm: LLMClient,
     skills: SkillRegistry,
     session_factory: async_sessionmaker[AsyncSession],
-    context_window_tokens: int,
     context_budget_percent: float,
-    chars_per_token: float,
     summary_fallback_max_messages: int,
     summary_fallback_max_chars_per_message: int,
     retriever_default_limit: int,
     retriever_max_limit: int,
 ) -> ContextManager:
-    estimator = ApproximateTokenEstimator(chars_per_token=chars_per_token)
+    profile = llm.profile
+    estimator = ModelTokenEstimator(llm=llm)
     budget_manager = ContextBudgetManager(
         estimator=estimator,
         policy=ContextBudgetPolicy(
-            model_context_window_tokens=context_window_tokens,
+            model_context_window_tokens=profile.context_window_tokens,
             dynamic_context_percentage=context_budget_percent,
         ),
     )

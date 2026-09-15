@@ -1,7 +1,7 @@
 import asyncio
 import signal
 
-from package.agent.composer.agent import compose_skills, compose_tools
+from package.agent.composer.agent import compose_default_skills, compose_tools
 from package.agent.composer.runtime import compose_agent_program
 from package.runner.composition.agent import AgentRuntimeFactory
 from package.runner.composition.context import compose_context_manager
@@ -34,15 +34,13 @@ async def run() -> None:
         progress_handler_steps=settings.user_database_progress_handler_steps,
     )
     tools = compose_tools(database_tool)
-    skills = compose_skills()
+    skills = compose_default_skills()
     llm = compose_llm(settings)
     context_manager = compose_context_manager(
         llm=llm,
         skills=skills,
         session_factory=session_factory,
-        context_window_tokens=settings.agent_context_window_tokens,
         context_budget_percent=settings.agent_context_budget_percent,
-        chars_per_token=settings.agent_context_chars_per_token,
         summary_fallback_max_messages=settings.agent_context_summary_fallback_max_messages,
         summary_fallback_max_chars_per_message=(
             settings.agent_context_summary_fallback_max_chars_per_message

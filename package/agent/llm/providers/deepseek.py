@@ -1,7 +1,7 @@
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_deepseek import ChatDeepSeek
 
-from package.agent.llm.config import DeepSeekConfig
+from package.agent.llm.config import DeepSeekConfig, LLMProvider
 from package.agent.llm.providers._langchain import LangChainLLMClient
 
 
@@ -24,4 +24,8 @@ class DeepSeekLLM(LangChainLLMClient):
             reasoning_effort=config.reasoning_effort.value,
             streaming=True,
         )
-        super().__init__(chat_model)
+        super().__init__(
+            chat_model,
+            provider=LLMProvider.DEEPSEEK,
+            model_name=config.model,
+        )

@@ -3,7 +3,9 @@ from package.agent.skills.contracts import Skill
 
 class SkillRegistry:
     def __init__(self, skills: list[Skill] | None = None) -> None:
-        self._skills = {skill.name: skill for skill in skills or []}
+        self._skills: dict[str, Skill] = {}
+        for skill in skills or []:
+            self.register(skill)
 
     def register(self, skill: Skill) -> None:
         if skill.name in self._skills:

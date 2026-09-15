@@ -1,13 +1,15 @@
 import json
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
+from package.agent.llm.config import LLMProvider
 from package.agent.llm.contracts import LLMClient
 from package.agent.llm.models import (
     LLMChunk,
     LLMMessage,
+    LLMModelProfile,
     LLMResponse,
     LLMToolCall,
     LLMToolDefinition,
@@ -18,12 +20,71 @@ from package.agent.llm.providers._messages import to_langchain_messages
 class LangChainLLMClient(LLMClient):
     """Base adapter for LangChain chat models.
 
-    This layer owns provider/model integration only. Agent orchestration belongs to
-    the LangGraph-backed AgentProgram above this contract.
+    Provider/model metadata and token accounting are obtained from the concrete
+    LangChain model. Agent orchestration belongs to the LangGraph-backed
+    AgentProgram above this contract.
     """
 
-    def __init__(self, model: BaseChatModel) -> None:
+    def __init__(
+        self,
+        model: BaseChatModel,
+        *,
+        provider: LLMProvider,
+        model_name: str,
+    ) -> None:
         self._model = model
+        self._provider = provider
+        self._model_name = model_name
+
+    @property
+    def profile(self) -> LLMModelProfile:
+        raw_profile = getattr(self._model, "profile", None)
+        context_window = (
+            raw_profile.get("max_input_tokens")
+            if isinstance(raw_profile, Mapping)
+            else None
+        )
+        if not isinstance(context_window, int) or isinstance(context_window, bool):
+            raise RuntimeError(
+                f"Model {self._model_name!r} from provider {self._provider.value!r} "
+                "does not expose a valid max_input_tokens model profile"
+            )
+        if context_window <= 0:
+            raise RuntimeError(
+                f"Model {self._model_name!r} exposes an invalid context window: "
+                f"{context_window}"
+            )
+        return LLMModelProfile(
+            provider=self._provider.value,
+            model=self._model_name,
+            context_window_tokens=context_window,
+        )
+
+    def count_text_tokens(self, text: str) -> int:
+        return int(self._model.get_num_tokens(text))
+
+    def count_tokens(
+        self,
+        messages: Sequence[LLMMessage],
+        *,
+        tools: Sequence[LLMToolDefinition] = (),
+    ) -> int:
+        total = 0
+        normalized_messages = list(messages)
+        if normalized_messages:
+            total += int(
+                self._model.get_num_tokens_from_messages(
+                    to_langchain_messages(normalized_messages)
+                )
+            )
+        if tools:
+            tool_payload = json.dumps(
+                [_to_langchain_tool(tool) for tool in tools],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            total += int(self._model.get_num_tokens(tool_payload))
+        return total
 
     async def invoke(
         self,

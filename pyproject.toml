@@ -32,6 +32,9 @@ dev = [
 include = ["package*"]
 exclude = ["data*", "tests*"]
 
+[tool.setuptools.package-data]
+"package.agent.skills" = ["*/SKILL.md"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

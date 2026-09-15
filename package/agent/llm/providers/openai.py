@@ -1,7 +1,7 @@
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 
-from package.agent.llm.config import OpenAIConfig
+from package.agent.llm.config import LLMProvider, OpenAIConfig
 from package.agent.llm.providers._langchain import LangChainLLMClient
 
 
@@ -26,4 +26,8 @@ class OpenAILLM(LangChainLLMClient):
             store=config.store,
             streaming=True,
         )
-        super().__init__(chat_model)
+        super().__init__(
+            chat_model,
+            provider=LLMProvider.OPENAI,
+            model_name=config.model,
+        )

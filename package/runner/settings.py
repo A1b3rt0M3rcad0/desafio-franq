@@ -53,9 +53,7 @@ class RunnerSettings(EnvSettings):
     agent_runtime_max_sql_retries: int
     agent_tool_max_concurrency_per_tool: int
 
-    agent_context_window_tokens: int
     agent_context_budget_percent: float
-    agent_context_chars_per_token: float
     agent_context_summary_fallback_max_messages: int
     agent_context_summary_fallback_max_chars_per_message: int
     agent_context_retriever_default_limit: int

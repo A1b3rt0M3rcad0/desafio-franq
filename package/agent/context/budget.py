@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from package.agent.context.contracts import TokenEstimator
 from package.agent.context.models import ContextBudgetReport
+from package.agent.llm.contracts import LLMClient
 from package.agent.llm.models import LLMMessage, LLMToolDefinition
 
 
@@ -27,11 +28,27 @@ class ContextBudgetPolicy:
         )
 
 
-class ApproximateTokenEstimator(TokenEstimator):
-    """Provider-independent fallback estimator.
+class ModelTokenEstimator(TokenEstimator):
+    """Counts context tokens through the configured LLM/model tokenizer."""
 
-    The ratio is external configuration so a provider-specific estimator can replace
-    this implementation later without changing the Context Manager contract.
+    def __init__(self, *, llm: LLMClient) -> None:
+        self._llm = llm
+
+    def estimate_text(self, text: str) -> int:
+        return self._llm.count_text_tokens(text)
+
+    def estimate_messages(self, messages: Sequence[LLMMessage]) -> int:
+        return self._llm.count_tokens(messages)
+
+    def estimate_tool_definitions(self, tools: Sequence[LLMToolDefinition]) -> int:
+        return self._llm.count_tokens((), tools=tools)
+
+
+class ApproximateTokenEstimator(TokenEstimator):
+    """Deterministic estimator kept for isolated tests and non-runtime fixtures.
+
+    The Runner never composes this estimator. Runtime token accounting is performed
+    by ``ModelTokenEstimator`` using the active model.
     """
 
     def __init__(self, *, chars_per_token: float) -> None:

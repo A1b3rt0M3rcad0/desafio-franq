@@ -2,6 +2,7 @@ from package.agent.context.budget import (
     ApproximateTokenEstimator,
     ContextBudgetManager,
     ContextBudgetPolicy,
+    ModelTokenEstimator,
 )
 from package.agent.context.builder import ContextBuilder
 from package.agent.context.manager import ContextManager, PreparedReasoningContext
@@ -33,6 +34,7 @@ __all__ = [
     "GlobalContextEntry",
     "GlobalContextKind",
     "GlobalContextRetriever",
+    "ModelTokenEstimator",
     "PreparedReasoningContext",
     "SkillDescriptor",
     "SnapshotReason",

@@ -12,6 +12,12 @@ class MessageRole(StrEnum):
     TOOL = "tool"
 
 
+class LLMModelProfile(BaseModel):
+    provider: str
+    model: str
+    context_window_tokens: int = Field(gt=0)
+
+
 class LLMToolCall(BaseModel):
     id: str
     name: str

@@ -3,10 +3,19 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import ToolMessage
 
 from package.agent.llm.config import DeepSeekConfig, OpenAIConfig, ReasoningEffort
-from package.agent.llm.models import LLMMessage, MessageRole
+from package.agent.llm.models import LLMMessage, LLMToolDefinition, MessageRole
 from package.agent.llm.providers._messages import to_langchain_messages
 from package.agent.llm.providers.deepseek import DeepSeekLLM
 from package.agent.llm.providers.openai import OpenAILLM
+
+
+class CountingFakeChatModel(GenericFakeChatModel):
+    def get_num_tokens(self, text: str) -> int:
+        return len(text.split())
+
+    def get_num_tokens_from_messages(self, messages, tools=None, **kwargs) -> int:
+        del tools, kwargs
+        return sum(len(str(message.content).split()) + 1 for message in messages)
 
 
 def _openai_config() -> OpenAIConfig:
@@ -94,3 +103,43 @@ def test_tool_message_is_converted_to_langchain_tool_message() -> None:
     assert len(messages) == 1
     assert isinstance(messages[0], ToolMessage)
     assert messages[0].tool_call_id == "call-1"
+
+
+def test_llm_profile_comes_from_active_model_profile() -> None:
+    model = CountingFakeChatModel(
+        messages=iter(["unused"]),
+        profile={"max_input_tokens": 123_456},
+    )
+    llm = OpenAILLM(_openai_config(), model=model)
+
+    assert llm.profile.provider == "openai"
+    assert llm.profile.model == "gpt-test"
+    assert llm.profile.context_window_tokens == 123_456
+
+
+def test_llm_token_count_is_delegated_to_model_tokenizer() -> None:
+    model = CountingFakeChatModel(
+        messages=iter(["unused"]),
+        profile={"max_input_tokens": 123_456},
+    )
+    llm = OpenAILLM(_openai_config(), model=model)
+    messages = [LLMMessage(role=MessageRole.USER, content="um dois três")]
+    tools = [
+        LLMToolDefinition(
+            name="lookup",
+            description="consulta valor",
+            input_schema={"type": "object", "properties": {}},
+        )
+    ]
+
+    assert llm.count_text_tokens("um dois três") == 3
+    assert llm.count_tokens(messages) == 4
+    assert llm.count_tokens(messages, tools=tools) > 4
+
+
+def test_missing_model_context_profile_fails_fast() -> None:
+    model = GenericFakeChatModel(messages=iter(["unused"]))
+    llm = OpenAILLM(_openai_config(), model=model)
+
+    with pytest.raises(RuntimeError, match="max_input_tokens"):
+        _ = llm.profile
