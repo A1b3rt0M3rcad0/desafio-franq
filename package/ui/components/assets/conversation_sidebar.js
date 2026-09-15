@@ -5,6 +5,7 @@
   const hasMore = __HAS_MORE__;
   const currentLimit = __CURRENT_LIMIT__;
   const pageSize = __PAGE_SIZE__;
+  const scrollStorageKey = "franq:conversation-list:scroll-top";
   let menuSessionId = null;
   let loadingMore = false;
   let clickTimer = null;
@@ -19,6 +20,31 @@
       }
     });
     window.parent.location.href = url.toString();
+  };
+
+  const rememberScroll = () => {
+    if (!list) {
+      return;
+    }
+    try {
+      window.parent.sessionStorage.setItem(scrollStorageKey, String(list.scrollTop));
+    } catch (_) {
+      // Scroll persistence is a progressive enhancement.
+    }
+  };
+
+  const restoreScroll = () => {
+    if (!list) {
+      return;
+    }
+    try {
+      const stored = Number(window.parent.sessionStorage.getItem(scrollStorageKey) || "0");
+      if (Number.isFinite(stored) && stored > 0) {
+        list.scrollTop = stored;
+      }
+    } catch (_) {
+      // The list remains usable if storage is unavailable.
+    }
   };
 
   const hideMenu = () => {
@@ -52,6 +78,7 @@
         restore();
         return;
       }
+      rememberScroll();
       navigate({
         rename_session_id: item.dataset.sessionId,
         rename_session_title: normalized,
@@ -86,6 +113,7 @@
         window.clearTimeout(clickTimer);
       }
       clickTimer = window.setTimeout(() => {
+        rememberScroll();
         navigate({
           session_id: item.dataset.sessionId,
           execution_id: null,
@@ -128,6 +156,7 @@
       hideMenu();
       return;
     }
+    rememberScroll();
     navigate({ delete_session_id: menuSessionId });
   });
 
@@ -139,9 +168,11 @@
 
   window.addEventListener("blur", hideMenu);
 
-  if (list && hasMore) {
+  if (list) {
+    window.requestAnimationFrame(restoreScroll);
     list.addEventListener("scroll", () => {
-      if (loadingMore) {
+      rememberScroll();
+      if (!hasMore || loadingMore) {
         return;
       }
       const remaining = list.scrollHeight - list.scrollTop - list.clientHeight;
