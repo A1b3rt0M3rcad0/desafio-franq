@@ -39,12 +39,29 @@ A conexão HTTP não é proprietária da execução. Atualizar a página ou perd
 
 ## LLMs
 
-O Agent depende somente do contrato `LLMClient`. As implementações concretas utilizam integrações oficiais do ecossistema LangChain e são executadas por um grafo LangGraph, preservando streaming de mensagens sem acoplar o restante do runtime ao provider.
+O Agent depende somente do contrato `LLMClient`. As implementações concretas de provider ficam na camada de integração com modelos e utilizam LangChain:
 
-Os providers disponíveis são:
+- `openai`: `OpenAILLM`, baseado em `ChatOpenAI`.
+- `deepseek`: `DeepSeekLLM`, baseado em `ChatDeepSeek`.
 
-- `openai`: `ChatOpenAI`, configurado para utilizar a Responses API e executado através do LangGraph.
-- `deepseek`: `ChatDeepSeek`, executado através do mesmo contrato e do mesmo adapter LangGraph.
+Esses adapters são responsáveis apenas por traduzir as mensagens internas do projeto para mensagens LangChain, configurar o provider e devolver o streaming pelo contrato `LLMClient`.
+
+O LangGraph não faz parte da implementação dos providers. Ele será utilizado acima dessa camada, na implementação concreta do `AgentProgram`, onde fará sentido controlar estado, nodes, conditional edges, retries e o loop agentic do desafio.
+
+A direção de dependência prevista é:
+
+```text
+Agent Runtime
+      |
+      v
+AgentProgram (LangGraph)
+      |
+      v
+LLMClient
+   |      |
+   v      v
+OpenAI  DeepSeek
+```
 
 O provider ativo é selecionado por `LLM_PROVIDER=openai` ou `LLM_PROVIDER=deepseek`. Apenas a configuração específica do provider selecionado é carregada pelo Runner.
 
@@ -66,9 +83,9 @@ Parâmetros que fazem parte do protocolo ou do domínio, como nomes de eventos, 
 
 ## Escopo atual
 
-A fundação arquitetural e de infraestrutura já contém boundaries entre packages, modelos de execução durável e outbox, hot state e streams no Redis, contratos do Observer, trace de execução, endpoints da API, consumer do Runner, Database Tool read-only e adapters LLM para OpenAI e DeepSeek executados com LangGraph.
+A fundação arquitetural e de infraestrutura já contém boundaries entre packages, modelos de execução durável e outbox, hot state e streams no Redis, contratos do Observer, trace de execução, endpoints da API, consumer do Runner, Database Tool read-only e adapters LLM LangChain para OpenAI e DeepSeek.
 
-O próximo núcleo funcional é a implementação do programa agentic que utilizará essas capacidades para planejamento, geração de consultas, execução, recuperação de erros, análise dos resultados e seleção de visualização.
+O próximo núcleo funcional é a implementação do `AgentProgram` com LangGraph, utilizando essas capacidades para planejamento, descoberta de schema, geração de consultas, execução, recuperação de erros, análise dos resultados e seleção de visualização.
 
 ## Infraestrutura local
 
