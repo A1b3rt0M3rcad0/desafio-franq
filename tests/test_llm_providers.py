@@ -1,89 +1,43 @@
-from types import SimpleNamespace
-from typing import Any
-
 import pytest
+from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+from langchain_core.messages import ToolMessage
 
-from package.agent.llm.config import OpenAIConfig, ReasoningEffort
+from package.agent.llm.config import DeepSeekConfig, OpenAIConfig, ReasoningEffort
 from package.agent.llm.models import LLMMessage, MessageRole
-from package.agent.llm.providers.gpt import GPTLLM
+from package.agent.llm.providers._messages import to_langchain_messages
+from package.agent.llm.providers.deepseek import DeepSeekLLM
 from package.agent.llm.providers.openai import OpenAILLM
 
 
-class FakeAsyncStream:
-    def __init__(self, events: list[Any]) -> None:
-        self._events = events
-        self._index = 0
-        self.closed = False
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        if self._index >= len(self._events):
-            raise StopAsyncIteration
-        event = self._events[self._index]
-        self._index += 1
-        return event
-
-    async def close(self) -> None:
-        self.closed = True
-
-
-class FakeResponsesResource:
-    def __init__(self, stream: FakeAsyncStream) -> None:
-        self.stream = stream
-        self.kwargs: dict[str, Any] | None = None
-
-    async def create(self, **kwargs):
-        self.kwargs = kwargs
-        return self.stream
-
-
-class FakeCompletionsResource:
-    def __init__(self, stream: FakeAsyncStream) -> None:
-        self.stream = stream
-        self.kwargs: dict[str, Any] | None = None
-
-    async def create(self, **kwargs):
-        self.kwargs = kwargs
-        return self.stream
-
-
-class FakeOpenAIClient:
-    def __init__(
-        self,
-        *,
-        responses: FakeResponsesResource | None = None,
-        completions: FakeCompletionsResource | None = None,
-    ) -> None:
-        self.responses = responses
-        self.chat = SimpleNamespace(completions=completions)
-
-
-def _config() -> OpenAIConfig:
+def _openai_config() -> OpenAIConfig:
     return OpenAIConfig(
         api_key="test-key",
-        base_url="https://example.test/v1",
+        base_url="https://api.openai.test/v1",
         model="gpt-test",
         timeout_seconds=30.0,
         max_output_tokens=512,
+        max_retries=2,
         reasoning_effort=ReasoningEffort.MEDIUM,
         store=False,
     )
 
 
-@pytest.mark.asyncio
-async def test_openai_responses_streams_text_deltas() -> None:
-    stream = FakeAsyncStream(
-        [
-            SimpleNamespace(type="response.created"),
-            SimpleNamespace(type="response.output_text.delta", delta="Olá"),
-            SimpleNamespace(type="response.output_text.delta", delta=" mundo"),
-        ]
+def _deepseek_config() -> DeepSeekConfig:
+    return DeepSeekConfig(
+        api_key="test-key",
+        base_url="https://api.deepseek.test/v1",
+        model="deepseek-test",
+        timeout_seconds=30.0,
+        max_output_tokens=512,
+        max_retries=2,
+        reasoning_effort=ReasoningEffort.HIGH,
     )
-    responses = FakeResponsesResource(stream)
-    client = FakeOpenAIClient(responses=responses)
-    llm = OpenAILLM(_config(), client=client)
+
+
+@pytest.mark.asyncio
+async def test_openai_streams_through_langgraph() -> None:
+    model = GenericFakeChatModel(messages=iter(["Olá mundo"]))
+    llm = OpenAILLM(_openai_config(), model=model)
 
     chunks = [
         chunk.content
@@ -92,29 +46,13 @@ async def test_openai_responses_streams_text_deltas() -> None:
         )
     ]
 
-    assert chunks == ["Olá", " mundo"]
-    assert stream.closed is True
-    assert responses.kwargs is not None
-    assert responses.kwargs["model"] == "gpt-test"
-    assert responses.kwargs["stream"] is True
-    assert responses.kwargs["store"] is False
+    assert "".join(chunks) == "Olá mundo"
 
 
 @pytest.mark.asyncio
-async def test_gpt_chat_streams_choice_deltas() -> None:
-    stream = FakeAsyncStream(
-        [
-            SimpleNamespace(
-                choices=[SimpleNamespace(delta=SimpleNamespace(content="Olá"))]
-            ),
-            SimpleNamespace(
-                choices=[SimpleNamespace(delta=SimpleNamespace(content=" mundo"))]
-            ),
-        ]
-    )
-    completions = FakeCompletionsResource(stream)
-    client = FakeOpenAIClient(completions=completions)
-    llm = GPTLLM(_config(), client=client)
+async def test_deepseek_streams_through_langgraph() -> None:
+    model = GenericFakeChatModel(messages=iter(["Olá DeepSeek"]))
+    llm = DeepSeekLLM(_deepseek_config(), model=model)
 
     chunks = [
         chunk.content
@@ -123,25 +61,36 @@ async def test_gpt_chat_streams_choice_deltas() -> None:
         )
     ]
 
-    assert chunks == ["Olá", " mundo"]
-    assert stream.closed is True
-    assert completions.kwargs is not None
-    assert completions.kwargs["model"] == "gpt-test"
-    assert completions.kwargs["stream"] is True
-    assert completions.kwargs["reasoning_effort"] == "medium"
+    assert "".join(chunks) == "Olá DeepSeek"
 
 
 @pytest.mark.asyncio
-async def test_tool_message_requires_tool_call_id() -> None:
-    stream = FakeAsyncStream([])
-    responses = FakeResponsesResource(stream)
-    client = FakeOpenAIClient(responses=responses)
-    llm = OpenAILLM(_config(), client=client)
+async def test_llm_requires_at_least_one_message() -> None:
+    model = GenericFakeChatModel(messages=iter(["unused"]))
+    llm = OpenAILLM(_openai_config(), model=model)
 
+    with pytest.raises(ValueError, match="At least one LLM message"):
+        _ = [chunk async for chunk in llm.stream([])]
+
+
+def test_tool_message_requires_tool_call_id() -> None:
     with pytest.raises(ValueError, match="tool_call_id"):
-        _ = [
-            chunk.content
-            async for chunk in llm.stream(
-                [LLMMessage(role=MessageRole.TOOL, content="resultado")]
+        to_langchain_messages(
+            [LLMMessage(role=MessageRole.TOOL, content="resultado")]
+        )
+
+
+def test_tool_message_is_converted_to_langchain_tool_message() -> None:
+    messages = to_langchain_messages(
+        [
+            LLMMessage(
+                role=MessageRole.TOOL,
+                content="resultado",
+                tool_call_id="call-1",
             )
         ]
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ToolMessage)
+    assert messages[0].tool_call_id == "call-1"
