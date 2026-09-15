@@ -5,3 +5,4 @@ from dataclasses import dataclass
 class RuntimePolicy:
     max_iterations: int
     max_sql_retries: int
+    max_parallel_tool_calls_per_tool: int
