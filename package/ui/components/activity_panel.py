@@ -9,17 +9,13 @@ from package.ui.observation import ActivityPresentation
 
 
 ACTIVITY_PANEL_HEIGHT_PX = 156
-
-
-def activity_panel_storage_key(execution_id: str) -> str:
-    return f"franq:execution:{execution_id}:activities-open"
-
-
-def activity_panel_marker(execution_id: str) -> str:
-    return render_asset(
-        "activity_panel_marker.html",
-        {"EXECUTION_ID": escape(execution_id, quote=True)},
-    )
+_ALLOWED_PANEL_STATES = {"running", "complete", "error"}
+_ACTIVITY_ICONS = {
+    "running": "◌",
+    "success": "✓",
+    "error": "✕",
+    "info": "•",
+}
 
 
 def _javascript_json(value: str) -> str:
@@ -29,6 +25,10 @@ def _javascript_json(value: str) -> str:
         .replace(">", "\\u003e")
         .replace("&", "\\u0026")
     )
+
+
+def activity_panel_storage_key(execution_id: str) -> str:
+    return f"franq:execution:{execution_id}:activities-open"
 
 
 def _script_replacements(execution_id: str) -> dict[str, str]:
@@ -60,7 +60,53 @@ def latest_activity(values: Iterable[dict[str, Any]]) -> ActivityPresentation | 
     return None
 
 
+def _activity_detail_html(activity: ActivityPresentation) -> str:
+    if not activity.detail:
+        return ""
+    detail = escape(activity.detail)
+    if activity.event_type == "sql.generated" or "SELECT " in activity.detail.upper():
+        return render_asset("activity_sql_detail.html", {"DETAIL": detail})
+    return render_asset("activity_detail.html", {"DETAIL": detail})
+
+
+def _activity_html(activity: ActivityPresentation) -> str:
+    status = activity.status if activity.status in _ACTIVITY_ICONS else "info"
+    sequence = "" if activity.sequence is None else str(activity.sequence)
+    return render_asset(
+        "activity_item.html",
+        {
+            "STATUS": status,
+            "SEQUENCE": escape(sequence, quote=True),
+            "ICON": _ACTIVITY_ICONS[status],
+            "TITLE": escape(activity.title),
+            "DETAIL": _activity_detail_html(activity),
+        },
+    )
+
+
+def render_activity_panel_html(
+    *,
+    execution_id: str,
+    label: str,
+    state: str,
+    activities: Iterable[ActivityPresentation],
+) -> str:
+    normalized_state = state if state in _ALLOWED_PANEL_STATES else "running"
+    activities_html = "".join(_activity_html(activity) for activity in activities)
+    return render_asset(
+        "activity_panel.html",
+        {
+            "STATE": normalized_state,
+            "EXECUTION_ID": escape(execution_id, quote=True),
+            "LABEL": escape(label),
+            "ACTIVITIES": activities_html,
+        },
+    )
+
+
 class ActivityPanel:
+    """Realtime execution panel rendered through a single Streamlit delta node."""
+
     def __init__(
         self,
         *,
@@ -70,33 +116,36 @@ class ActivityPanel:
         activities: Iterable[ActivityPresentation] = (),
     ) -> None:
         self._execution_id = execution_id
-        self._status_view = st.status(label, expanded=False, state=state)
-        self._activity_view = self._status_view.container(
-            height=ACTIVITY_PANEL_HEIGHT_PX,
-            border=False,
-            key=f"activity_timeline_{execution_id}",
-            gap="xxsmall",
+        self._label = label
+        self._state = state if state in _ALLOWED_PANEL_STATES else "running"
+        self._activities = list(activities)
+        inject_style_asset(
+            "activity_panel.css",
+            {"PANEL_HEIGHT_PX": str(ACTIVITY_PANEL_HEIGHT_PX)},
         )
-        self._activity_view.markdown(activity_panel_marker(execution_id), unsafe_allow_html=True)
-        inject_style_asset("activity_panel.css")
+        self._view = st.empty()
+        self._render()
         mount_script_asset("activity_panel.js", _script_replacements(execution_id))
-        for activity in activities:
-            self.append(activity)
+
+    def _render(self) -> None:
+        self._view.markdown(
+            render_activity_panel_html(
+                execution_id=self._execution_id,
+                label=self._label,
+                state=self._state,
+                activities=self._activities,
+            ),
+            unsafe_allow_html=True,
+        )
 
     def append(self, activity: ActivityPresentation) -> None:
-        icon = {
-            "running": "◌",
-            "success": "✓",
-            "error": "✕",
-            "info": "•",
-        }.get(activity.status, "•")
-        self._activity_view.markdown(f"{icon} **{activity.title}**")
-        if not activity.detail:
-            return
-        if activity.event_type == "sql.generated" or "SELECT " in activity.detail.upper():
-            self._activity_view.code(activity.detail, language="sql")
-        else:
-            self._activity_view.caption(activity.detail)
+        self._activities.append(activity)
+        self._render()
 
     def update(self, *, label: str, state: str) -> None:
-        self._status_view.update(label=label, state=state)
+        normalized_state = state if state in _ALLOWED_PANEL_STATES else "running"
+        if label == self._label and normalized_state == self._state:
+            return
+        self._label = label
+        self._state = normalized_state
+        self._render()
