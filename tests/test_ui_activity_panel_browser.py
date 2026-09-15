@@ -25,7 +25,7 @@ def _wait_for_port(host: str, port: int, timeout_seconds: float = 20.0) -> None:
     raise RuntimeError(f"Streamlit did not start on {host}:{port}")
 
 
-def test_activity_panel_uses_vertical_native_scroll_without_overlap(page) -> None:
+def test_activity_panel_streams_incrementally_without_overlap(page) -> None:
     port = 8765
     process = subprocess.Popen(
         [
@@ -44,60 +44,62 @@ def test_activity_panel_uses_vertical_native_scroll_without_overlap(page) -> Non
     try:
         _wait_for_port("127.0.0.1", port)
         page.goto(f"http://127.0.0.1:{port}")
-        marker = page.locator('[data-franq-activity-panel="fixture-execution"]')
-        marker.wait_for(state="attached")
 
-        details = marker.locator("xpath=ancestor::details[1]")
-        details.locator("summary").click()
-        page.wait_for_timeout(300)
-        assert details.get_attribute("open") is not None
+        panel = page.locator('[data-franq-activity-panel="fixture-execution"]')
+        panel.wait_for(state="attached")
+        panel.locator("summary").click()
+        page.wait_for_timeout(150)
+        assert panel.get_attribute("open") is not None
 
-        metrics = marker.evaluate(
+        page.get_by_role("button", name="Simular stream incremental").click()
+        page.wait_for_function(
             """
-            (marker) => {
-              const boundary = marker.closest('details');
-              let node = marker.parentElement;
-              while (node && node !== boundary) {
-                const style = getComputedStyle(node);
-                if (['auto', 'scroll', 'overlay'].includes(style.overflowY)) {
-                  const titles = Array.from(
-                    node.querySelectorAll('[data-testid="stMarkdownContainer"] p')
-                  ).filter((element) => element.textContent.includes('Atividade de validação'));
-                  const rects = titles.map((element) => {
-                    const rect = element.getBoundingClientRect();
-                    return { top: rect.top, bottom: rect.bottom };
-                  });
-                  return {
-                    clientHeight: node.clientHeight,
-                    scrollHeight: node.scrollHeight,
-                    clientWidth: node.clientWidth,
-                    scrollWidth: node.scrollWidth,
-                    overflowY: style.overflowY,
-                    rects,
-                  };
-                }
-                node = node.parentElement;
-              }
-              return null;
+            () => document.querySelectorAll(
+              '[data-franq-activity-panel="fixture-execution"] .franq-activity-item'
+            ).length === 20
+            """
+        )
+
+        panel = page.locator('[data-franq-activity-panel="fixture-execution"]')
+        panel.wait_for(state="attached")
+        page.wait_for_timeout(150)
+        assert panel.get_attribute("open") is not None
+
+        timeline = panel.locator('[data-franq-activity-scroll]')
+        metrics = timeline.evaluate(
+            """
+            (timeline) => {
+              const style = getComputedStyle(timeline);
+              const rects = Array.from(
+                timeline.querySelectorAll('.franq-activity-item')
+              ).map((element) => {
+                const rect = element.getBoundingClientRect();
+                return { top: rect.top, bottom: rect.bottom, height: rect.height };
+              });
+              return {
+                clientHeight: timeline.clientHeight,
+                scrollHeight: timeline.scrollHeight,
+                clientWidth: timeline.clientWidth,
+                scrollWidth: timeline.scrollWidth,
+                overflowY: style.overflowY,
+                overflowX: style.overflowX,
+                rects,
+              };
             }
             """
         )
 
-        assert metrics is not None
+        assert metrics["overflowY"] in {"auto", "scroll", "overlay"}
+        assert metrics["overflowX"] == "hidden"
         assert metrics["scrollHeight"] > metrics["clientHeight"]
         assert metrics["clientHeight"] <= 180
         assert metrics["scrollWidth"] <= metrics["clientWidth"] + 2
+
         rects = metrics["rects"]
-        assert len(rects) >= 10
+        assert len(rects) == 20
+        assert all(rect["height"] > 0 for rect in rects)
         for previous, current in zip(rects, rects[1:], strict=False):
             assert current["top"] >= previous["bottom"] - 1
-
-        page.get_by_role("button", name="Adicionar evento").click()
-        marker = page.locator('[data-franq-activity-panel="fixture-execution"]')
-        marker.wait_for(state="attached")
-        details = marker.locator("xpath=ancestor::details[1]")
-        page.wait_for_timeout(300)
-        assert details.get_attribute("open") is not None
     finally:
         process.terminate()
         try:
