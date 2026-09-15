@@ -32,10 +32,38 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
+      - name: Prepare environment
+        run: cp .env.example .env
+
       - name: Validate Docker Compose
+        run: docker compose config --quiet
+
+      - name: Start PostgreSQL
+        run: docker compose up -d postgres
+
+      - name: Build migrations image
+        run: docker compose build migrations
+
+      - name: Run migrations on fresh database
+        run: docker compose run --rm migrations
+
+      - name: Validate migrations are idempotent
+        run: docker compose run --rm migrations
+
+      - name: Check migration/model drift
         run: |
-          cp .env.example .env
-          docker compose config --quiet
+          set -a
+          source .env
+          set +a
+          python -m alembic check
 
       - name: Run tests
-        run: python -m pytest -q
+        run: |
+          set -a
+          source .env
+          set +a
+          RUN_POSTGRES_INTEGRATION_TESTS=1 python -m pytest -q
+
+      - name: Stop services
+        if: always()
+        run: docker compose down -v

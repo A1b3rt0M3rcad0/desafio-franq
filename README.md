@@ -101,6 +101,8 @@ O percentual é definido por `AGENT_CONTEXT_BUDGET_PERCENT`. A janela real e a c
 
 Snapshots são criados ao final de cada execução e também quando o Context Budget é ultrapassado durante uma execução. O Global Context continua sendo a fonte de verdade, permitindo recuperar detalhes eventualmente omitidos pelos summaries.
 
+As sequências de `Global Context` e `Context Snapshot` são ordenadas por sessão. A alocação da sequência é protegida por lock transacional da própria `agent_sessions`, permitindo que Tools continuem executando em paralelo sem colisões de `(session_id, sequence)` durante a persistência.
+
 ## Skills
 
 Skills são arquivos `SKILL.md` lazy-loaded. O contexto base conhece apenas `name` e `description`. O corpo completo entra somente no reasoning que solicitou a Skill e é descartado depois.
@@ -137,9 +139,11 @@ A interface é deliberadamente simples: um chat com acompanhamento da execução
 Ela suporta:
 
 - criação automática de Session;
-- recuperação do histórico da Session através da API;
+- seleção e recuperação do histórico de Sessions através da API;
 - reattach de Execution ativa após refresh usando o Observer/SSE;
-- resposta textual no chat;
+- resposta textual com streaming;
+- um único composer cujo botão muda de `Enviar` para `Stop` enquanto existe uma execução ativa;
+- cancelamento real da inferência pelo Runner;
 - tabelas;
 - gráficos `bar`, `line` e `scatter`.
 
@@ -162,9 +166,32 @@ Quando houver visualização, o frontend espera um resultado no formato:
 
 Se houver dados tabulares mas nenhuma especificação de visualização, a interface degrada automaticamente para tabela. Uma especificação inválida também degrada para tabela em vez de quebrar a conversa.
 
+## Banco interno e migrations
+
+O schema do PostgreSQL é versionado exclusivamente com Alembic. A API não executa `Base.metadata.create_all()` e não é autoridade sobre criação de tabelas.
+
+A estrutura de migrations fica em:
+
+```text
+alembic.ini
+migrations/
+  env.py
+  bootstrap.py
+  versions/
+    0001_initial_schema.py
+Dockerfile.migrations
+```
+
+`migrations/bootstrap.py` suporta dois caminhos:
+
+- banco novo: executa `alembic upgrade head` normalmente;
+- banco legado criado pela versão anterior via `create_all`: valida a presença das tabelas/colunas esperadas, executa `alembic stamp 0001_initial_schema` sem destruir dados e depois aplica migrations futuras.
+
+Schemas legados parciais não são adotados silenciosamente: o container de migrations falha e impede a aplicação de iniciar.
+
 ## Execução local com Docker Compose
 
-O `compose.yaml` sobe a aplicação completa: PostgreSQL, Redis, FastAPI, Runner e Streamlit. O mesmo `Dockerfile` é reutilizado pelos três processos Python, mantendo API, Runner e interface como processos separados apesar de compartilharem a mesma imagem.
+O `compose.yaml` sobe a aplicação completa: PostgreSQL, migration one-shot, Redis, FastAPI, Runner e Streamlit. API, Runner e interface continuam processos separados.
 
 Primeiro copie as variáveis de ambiente e preencha a chave do provider selecionado:
 
@@ -185,6 +212,26 @@ Depois suba todo o stack:
 docker compose up --build
 ```
 
+A ordem relevante de startup é:
+
+```text
+PostgreSQL healthy
+      |
+      v
+migrations (one-shot)
+      |
+      | service_completed_successfully
+      v
+FastAPI healthy
+   +--+--+
+   |     |
+Runner Streamlit
+```
+
+Redis inicia em paralelo e também precisa estar saudável antes da API.
+
+Se uma migration falhar, API, Runner e Streamlit não iniciam. Isso evita descobrir um schema incompatível no meio de uma Execution.
+
 Quando os serviços estiverem saudáveis, a conversa pode ser iniciada diretamente em:
 
 ```text
@@ -196,8 +243,6 @@ A API fica disponível em:
 ```text
 http://localhost:8000
 ```
-
-O startup é ordenado por healthchecks: PostgreSQL e Redis ficam saudáveis, a API sobe e cria o schema interno quando necessário, depois Runner e Streamlit são iniciados. Dentro da rede Docker, a API e o Runner recebem automaticamente URLs internas para PostgreSQL/Redis, enquanto o Streamlit utiliza `http://api:8000`.
 
 O serviço `runner` é escalável. Cada container recebe o próprio hostname como `RUNNER_ID`, então é possível iniciar múltiplos consumers sem colisão de identidade:
 
@@ -223,10 +268,11 @@ docker compose down -v
 
 ### Execução sem containers para os processos Python
 
-Também é possível subir apenas PostgreSQL/Redis e executar API, Runner e Streamlit localmente. Nesse caso mantenha os valores `localhost` definidos em `.env` e execute:
+Também é possível subir PostgreSQL/Redis, aplicar migrations e executar API, Runner e Streamlit localmente. Nesse caso mantenha os valores `localhost` definidos em `.env` e execute:
 
 ```bash
 pip install -e .
+alembic upgrade head
 uvicorn package.api.http.app:app --reload
 python -m package.runner.main
 streamlit run package/ui/app.py
@@ -238,10 +284,16 @@ streamlit run package/ui/app.py
 pytest
 ```
 
-O workflow `.github/workflows/tests.yml` valida também a configuração do Docker Compose e executa a suíte automaticamente em todo pull request direcionado à `master`.
+Os testes de concorrência reais do repositório PostgreSQL são habilitados com:
+
+```bash
+RUN_POSTGRES_INTEGRATION_TESTS=1 pytest tests/test_context_repository_concurrency.py
+```
+
+O workflow `.github/workflows/tests.yml` valida Docker Compose, executa o container one-shot de migrations duas vezes para validar idempotência, roda `alembic check`, habilita os testes concorrentes contra PostgreSQL real e depois executa toda a suíte.
 
 ## Estado atual
 
-Já estão implementados: execução durável via Outbox, Runner independente, Observer com reattach, Context Manager com snapshots e recuperação lexical, Skills lazy-loaded, providers OpenAI/DeepSeek, Database Tool read-only, loop LangGraph, interface Streamlit e stack completo via Docker Compose.
+Já estão implementados: execução durável via Outbox, Runner independente, Observer com reattach, Context Manager com snapshots e recuperação lexical, Skills lazy-loaded, providers OpenAI/DeepSeek, Database Tool read-only, loop LangGraph, interface Streamlit, cancelamento de inferência, migrations Alembic e stack completo via Docker Compose.
 
 As próximas capacidades específicas do desafio são consolidar o tratamento dirigido de erros SQL, estruturar o resultado analítico final e fazer o Agent produzir a especificação de visualização consumida pela interface.
