@@ -44,17 +44,52 @@ O Agent depende somente do contrato `LLMClient`. As implementações concretas d
 - `openai`: `OpenAILLM`, baseado em `ChatOpenAI`.
 - `deepseek`: `DeepSeekLLM`, baseado em `ChatDeepSeek`.
 
-Esses adapters são responsáveis apenas por traduzir as mensagens internas do projeto para mensagens LangChain, configurar o provider e devolver o streaming pelo contrato `LLMClient`.
+Os adapters traduzem as mensagens internas, configuram o provider e expõem `invoke`/`stream` pelo contrato `LLMClient`. Tool calling também atravessa esse contrato; o runtime não depende diretamente de classes do LangChain.
 
-O LangGraph não faz parte da implementação dos providers. Ele será utilizado acima dessa camada, na implementação concreta do `AgentProgram`, onde fará sentido controlar estado, nodes, conditional edges, retries e o loop agentic do desafio.
+O provider ativo é selecionado por `LLM_PROVIDER=openai` ou `LLM_PROVIDER=deepseek`. Apenas a configuração específica do provider selecionado é carregada pelo Runner.
 
-A direção de dependência prevista é:
+## Runtime do Agent
+
+A implementação concreta de `AgentProgram` utiliza LangGraph para controlar o ciclo de execução. O grafo é genérico: ele não conhece OpenAI, DeepSeek ou SQLite diretamente; depende apenas de `LLMClient` e `ToolRegistry`.
+
+```text
+START
+  |
+  v
+Agent
+  |
+  | valida limite e inicia uma iteração
+  v
+Reasoning / LLM
+  |
+  +------------------------------+
+  |                              |
+  | tool call                    | resposta final
+  v                              v
+Tool                           Answer
+  |                              |
+  | resultado/erro               v
+  +-----------> Agent           END -> Client
+```
+
+Cada passagem pelo node `Agent` inicia uma nova iteração. O `Reasoning` pode produzir uma ou mais chamadas de Tool ou concluir a execução com uma resposta. Após uma Tool, o resultado é convertido em `ToolMessage` e devolvido ao contexto do Agent, iniciando uma nova iteração. Erros de Tool também retornam ao Agent como resultado estruturado, permitindo que ele tente corrigir sua decisão em vez de encerrar imediatamente a execução.
+
+O ciclo termina quando:
+
+- o modelo produz uma resposta sem novas chamadas de Tool; ou
+- `AGENT_RUNTIME_MAX_ITERATIONS` é atingido.
+
+O Observer recebe apenas eventos estruturados (`agent.iteration.started`, `agent.decision`, lifecycle da LLM e das Tools, resposta final etc.). Raciocínio interno/chain-of-thought do modelo não é persistido nem exposto.
+
+A direção de dependência é:
 
 ```text
 Agent Runtime
       |
       v
 AgentProgram (LangGraph)
+      |
+      +---------> ToolRegistry
       |
       v
 LLMClient
@@ -63,7 +98,7 @@ LLMClient
 OpenAI  DeepSeek
 ```
 
-O provider ativo é selecionado por `LLM_PROVIDER=openai` ou `LLM_PROVIDER=deepseek`. Apenas a configuração específica do provider selecionado é carregada pelo Runner.
+O Runner já compõe concretamente LLM, Database Tool, Tool Registry, `LangGraphAgentProgram`, Observer e Worker; portanto a execução deixa de ser apenas uma fundação e passa a possuir um ciclo agentic executável.
 
 ## Configuração
 
@@ -83,9 +118,9 @@ Parâmetros que fazem parte do protocolo ou do domínio, como nomes de eventos, 
 
 ## Escopo atual
 
-A fundação arquitetural e de infraestrutura já contém boundaries entre packages, modelos de execução durável e outbox, hot state e streams no Redis, contratos do Observer, trace de execução, endpoints da API, consumer do Runner, Database Tool read-only e adapters LLM LangChain para OpenAI e DeepSeek.
+A fundação arquitetural e de infraestrutura contém boundaries entre packages, modelos de execução durável e outbox, hot state e streams no Redis, contratos do Observer, trace de execução, endpoints da API, consumer do Runner, Database Tool read-only, adapters LLM LangChain para OpenAI e DeepSeek e o ciclo iterativo do Agent implementado com LangGraph.
 
-O próximo núcleo funcional é a implementação do `AgentProgram` com LangGraph, utilizando essas capacidades para planejamento, descoberta de schema, geração de consultas, execução, recuperação de erros, análise dos resultados e seleção de visualização.
+As próximas etapas específicas do desafio são enriquecer o contexto e os prompts para planejamento analítico, tratamento dirigido de falhas de SQL, análise dos resultados e seleção de visualização.
 
 ## Infraestrutura local
 
