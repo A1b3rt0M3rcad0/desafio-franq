@@ -1,7 +1,7 @@
 from typing import Any, TypedDict
 
 from package.agent.llm.models import LLMMessage, LLMToolCall
-from package.agent.observer.contracts import ExecutionObserver
+from package.agent.observer.contracts import ExecutionEventSink
 
 
 class AgentGraphState(TypedDict):
@@ -18,5 +18,5 @@ class AgentGraphState(TypedDict):
     max_parallel_tool_calls_per_tool: int
     answer: str
     stop_reason: str | None
-    observer: ExecutionObserver
+    observer: ExecutionEventSink
     metadata: dict[str, Any]
