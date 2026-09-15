@@ -29,19 +29,25 @@ class FakeSessionFactory:
 
 
 @pytest.mark.asyncio
-async def test_list_sessions_uses_repository_limit_and_presents_each_session(
+async def test_list_sessions_uses_pagination_and_hides_empty_sessions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     factory = FakeSessionFactory()
     entities = [SimpleNamespace(id="session-1"), SimpleNamespace(id="session-2")]
-    observed_limits: list[int] = []
+    observed_calls: list[tuple[int, int, bool]] = []
 
     class FakeSessionRepository:
         def __init__(self, db) -> None:
             assert db is factory.db
 
-        async def list_recent(self, *, limit: int):
-            observed_limits.append(limit)
+        async def list_recent(
+            self,
+            *,
+            limit: int,
+            offset: int,
+            only_with_executions: bool,
+        ):
+            observed_calls.append((limit, offset, only_with_executions))
             return entities
 
     monkeypatch.setattr(sessions_route, "SessionRepository", FakeSessionRepository)
@@ -53,8 +59,9 @@ async def test_list_sessions_uses_repository_limit_and_presents_each_session(
 
     result = await sessions_route.list_sessions(
         limit=25,
+        offset=10,
         session_factory=factory,
     )
 
-    assert observed_limits == [25]
+    assert observed_calls == [(25, 10, True)]
     assert result == [{"id": "session-1"}, {"id": "session-2"}]
