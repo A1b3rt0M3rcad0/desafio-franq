@@ -1,77 +1,32 @@
-(() => {
-  const list = document.getElementById("conversation-list");
-  const menu = document.getElementById("conversation-context-menu");
-  const menuActions = document.getElementById("conversation-context-actions");
-  const deleteAction = document.getElementById("conversation-delete-action");
-  const deleteConfirm = document.getElementById("conversation-delete-confirm");
-  const deleteCancel = document.getElementById("conversation-delete-cancel");
-  const deleteConfirmAction = document.getElementById("conversation-delete-confirm-action");
-  const hasMore = __HAS_MORE__;
-  const currentLimit = __CURRENT_LIMIT__;
-  const pageSize = __PAGE_SIZE__;
+export default function(component) {
+  const { data, parentElement } = component;
+  const list = parentElement.querySelector("#conversation-list");
+  const menu = parentElement.querySelector("#conversation-context-menu");
+  const menuActions = parentElement.querySelector("#conversation-context-actions");
+  const deleteAction = parentElement.querySelector("#conversation-delete-action");
+  const deleteConfirm = parentElement.querySelector("#conversation-delete-confirm");
+  const deleteCancel = parentElement.querySelector("#conversation-delete-cancel");
+  const deleteConfirmAction = parentElement.querySelector(
+    "#conversation-delete-confirm-action"
+  );
+
+  if (!list || !menu || !menuActions || !deleteAction || !deleteConfirm ||
+      !deleteCancel || !deleteConfirmAction) {
+    return;
+  }
+
+  const sessions = Array.isArray(data?.sessions) ? data.sessions : [];
+  const activeSessionId = String(data?.active_session_id || "");
+  const hasMore = Boolean(data?.has_more);
+  const currentLimit = Number(data?.current_limit || 20);
+  const pageSize = Number(data?.page_size || 20);
   const scrollStorageKey = "franq:conversation-list:scroll-top";
   let menuSessionId = null;
   let loadingMore = false;
   let clickTimer = null;
 
-  const parseRgb = (value) => {
-    const match = String(value || "").match(/rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
-    if (!match) {
-      return null;
-    }
-    return [Number(match[1]), Number(match[2]), Number(match[3])];
-  };
-
-  const isDark = (value) => {
-    const rgb = parseRgb(value);
-    if (!rgb) {
-      return true;
-    }
-    const [red, green, blue] = rgb.map((channel) => channel / 255);
-    const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
-    return luminance < 0.5;
-  };
-
-  const syncTheme = () => {
-    try {
-      const parentDocument = window.parent.document;
-      const sidebar = parentDocument.querySelector('[data-testid="stSidebar"]');
-      const source = sidebar || parentDocument.body;
-      const sourceStyle = window.parent.getComputedStyle(source);
-      const rootStyle = window.parent.getComputedStyle(parentDocument.documentElement);
-      const dark = isDark(sourceStyle.backgroundColor);
-      const textColor = sourceStyle.color || (dark ? "#f5f5f5" : "#262730");
-      const primary = rootStyle.getPropertyValue("--primary-color").trim() || "#ff4b4b";
-
-      document.documentElement.style.setProperty("--franq-text-color", textColor);
-      document.documentElement.style.setProperty("--franq-accent", primary);
-      document.documentElement.style.setProperty(
-        "--franq-hover-bg",
-        dark ? "rgba(255, 255, 255, 0.07)" : "rgba(0, 0, 0, 0.055)"
-      );
-      document.documentElement.style.setProperty(
-        "--franq-active-bg",
-        dark ? "rgba(255, 255, 255, 0.13)" : "rgba(0, 0, 0, 0.09)"
-      );
-      document.documentElement.style.setProperty(
-        "--franq-active-border",
-        dark ? "rgba(255, 255, 255, 0.16)" : "rgba(0, 0, 0, 0.13)"
-      );
-      document.documentElement.style.setProperty(
-        "--franq-menu-bg",
-        sourceStyle.backgroundColor || (dark ? "#262730" : "#ffffff")
-      );
-      document.documentElement.style.setProperty(
-        "--franq-menu-border",
-        dark ? "rgba(255, 255, 255, 0.12)" : "rgba(0, 0, 0, 0.14)"
-      );
-    } catch (_) {
-      // Defaults in CSS keep the component readable if the parent theme cannot be inspected.
-    }
-  };
-
   const navigate = (changes) => {
-    const url = new URL(window.parent.location.href);
+    const url = new URL(window.location.href);
     Object.entries(changes).forEach(([key, value]) => {
       if (value === null || value === undefined || value === "") {
         url.searchParams.delete(key);
@@ -79,26 +34,20 @@
         url.searchParams.set(key, String(value));
       }
     });
-    window.parent.location.href = url.toString();
+    window.location.href = url.toString();
   };
 
   const rememberScroll = () => {
-    if (!list) {
-      return;
-    }
     try {
-      window.parent.sessionStorage.setItem(scrollStorageKey, String(list.scrollTop));
+      window.sessionStorage.setItem(scrollStorageKey, String(list.scrollTop));
     } catch (_) {
-      // Scroll persistence is a progressive enhancement.
+      // Scroll persistence is optional.
     }
   };
 
   const restoreScroll = () => {
-    if (!list) {
-      return;
-    }
     try {
-      const stored = Number(window.parent.sessionStorage.getItem(scrollStorageKey) || "0");
+      const stored = Number(window.sessionStorage.getItem(scrollStorageKey) || "0");
       if (Number.isFinite(stored) && stored > 0) {
         list.scrollTop = stored;
       }
@@ -166,10 +115,10 @@
       });
     };
 
-    editor.addEventListener("click", (event) => event.stopPropagation());
-    editor.addEventListener("dblclick", (event) => event.stopPropagation());
-    editor.addEventListener("contextmenu", (event) => event.stopPropagation());
-    editor.addEventListener("keydown", (event) => {
+    editor.onclick = (event) => event.stopPropagation();
+    editor.ondblclick = (event) => event.stopPropagation();
+    editor.oncontextmenu = (event) => event.stopPropagation();
+    editor.onkeydown = (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
         commit();
@@ -177,16 +126,37 @@
         event.preventDefault();
         restore();
       }
-    });
-    editor.addEventListener("blur", restore);
+    };
+    editor.onblur = restore;
 
     titleNode.replaceWith(editor);
     editor.focus();
     editor.select();
   };
 
-  document.querySelectorAll(".conversation-item").forEach((item) => {
-    item.addEventListener("click", () => {
+  const createConversationItem = (session) => {
+    const sessionId = String(session?.id || "");
+    if (!sessionId) {
+      return null;
+    }
+    const title = String(session?.title || "Conversa");
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "conversation-item";
+    if (sessionId === activeSessionId) {
+      item.classList.add("is-active");
+      item.setAttribute("aria-current", "page");
+    }
+    item.dataset.sessionId = sessionId;
+    item.dataset.sessionTitle = title;
+    item.title = title;
+
+    const titleNode = document.createElement("span");
+    titleNode.className = "conversation-item-title";
+    titleNode.textContent = title;
+    item.appendChild(titleNode);
+
+    item.onclick = () => {
       if (item.querySelector(".conversation-title-editor")) {
         return;
       }
@@ -196,14 +166,14 @@
       clickTimer = window.setTimeout(() => {
         rememberScroll();
         navigate({
-          session_id: item.dataset.sessionId,
+          session_id: sessionId,
           execution_id: null,
           new_conversation: null,
         });
       }, 180);
-    });
+    };
 
-    item.addEventListener("dblclick", (event) => {
+    item.ondblclick = (event) => {
       event.preventDefault();
       event.stopPropagation();
       if (clickTimer) {
@@ -211,19 +181,28 @@
         clickTimer = null;
       }
       beginRename(item);
-    });
+    };
 
-    item.addEventListener("contextmenu", (event) => {
+    item.oncontextmenu = (event) => {
       if (item.querySelector(".conversation-title-editor")) {
         return;
       }
       event.preventDefault();
       event.stopPropagation();
       openMenu(item, event);
-    });
+    };
+    return item;
+  };
+
+  list.replaceChildren();
+  sessions.forEach((session) => {
+    const item = createConversationItem(session);
+    if (item) {
+      list.appendChild(item);
+    }
   });
 
-  deleteAction.addEventListener("click", (event) => {
+  deleteAction.onclick = (event) => {
     event.preventDefault();
     event.stopPropagation();
     if (!menuSessionId) {
@@ -231,15 +210,15 @@
     }
     menuActions.hidden = true;
     deleteConfirm.hidden = false;
-  });
+  };
 
-  deleteCancel.addEventListener("click", (event) => {
+  deleteCancel.onclick = (event) => {
     event.preventDefault();
     event.stopPropagation();
     hideMenu();
-  });
+  };
 
-  deleteConfirmAction.addEventListener("click", (event) => {
+  deleteConfirmAction.onclick = (event) => {
     event.preventDefault();
     event.stopPropagation();
     if (!menuSessionId) {
@@ -253,39 +232,25 @@
       rename_session_id: null,
       rename_session_title: null,
     });
-  });
+  };
 
-  document.addEventListener("click", (event) => {
-    if (!menu.contains(event.target)) {
+  list.onclick = (event) => {
+    if (event.target === list) {
       hideMenu();
     }
-  });
+  };
 
-  window.addEventListener("blur", hideMenu);
+  list.onscroll = () => {
+    rememberScroll();
+    if (!hasMore || loadingMore) {
+      return;
+    }
+    const remaining = list.scrollHeight - list.scrollTop - list.clientHeight;
+    if (remaining <= 48) {
+      loadingMore = true;
+      navigate({ sessions_limit: currentLimit + pageSize });
+    }
+  };
 
-  if (list) {
-    window.requestAnimationFrame(restoreScroll);
-    list.addEventListener("scroll", () => {
-      rememberScroll();
-      if (!hasMore || loadingMore) {
-        return;
-      }
-      const remaining = list.scrollHeight - list.scrollTop - list.clientHeight;
-      if (remaining <= 48) {
-        loadingMore = true;
-        navigate({ sessions_limit: currentLimit + pageSize });
-      }
-    });
-  }
-
-  syncTheme();
-  try {
-    const parentRoot = window.parent.document.documentElement;
-    new MutationObserver(syncTheme).observe(parentRoot, {
-      attributes: true,
-      attributeFilter: ["class", "style"],
-    });
-  } catch (_) {
-    // Theme updates remain optional.
-  }
-})();
+  window.requestAnimationFrame(restoreScroll);
+}
