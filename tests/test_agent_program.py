@@ -9,6 +9,7 @@ from package.agent.llm.models import (
     LLMResponse,
     LLMToolCall,
     LLMToolDefinition,
+    MessageRole,
 )
 from package.agent.observer.events import ExecutionEvent, ExecutionEventType
 from package.agent.runtime.loop import RuntimePolicy
@@ -164,3 +165,106 @@ async def test_agent_stops_when_max_iterations_is_reached() -> None:
     assert ExecutionEventType.AGENT_MAX_ITERATIONS_REACHED in [
         event.type for event in observer.events
     ]
+
+
+@pytest.mark.asyncio
+async def test_agent_can_answer_without_calling_tools() -> None:
+    llm = FakeLLM([LLMResponse(content="Resposta direta.")])
+    observer = RecordingObserver()
+    program = LangGraphAgentProgram(llm=llm, tools=ToolRegistry())
+
+    result = await program.execute(
+        execution_id="execution-1",
+        session_id="session-1",
+        question="Responda diretamente",
+        observer=observer,
+        policy=RuntimePolicy(max_iterations=3, max_sql_retries=2),
+    )
+
+    assert result.answer == "Resposta direta."
+    assert result.result == {"iterations": 1, "tool_calls": 0, "stop_reason": "answer"}
+    assert len(llm.calls) == 1
+    assert [message.role for message in llm.calls[0]] == [MessageRole.SYSTEM, MessageRole.USER]
+    assert llm.tools == [()]
+    assert [event.type for event in observer.events] == [
+        ExecutionEventType.AGENT_ITERATION_STARTED,
+        ExecutionEventType.LLM_STARTED,
+        ExecutionEventType.LLM_COMPLETED,
+        ExecutionEventType.AGENT_DECISION,
+        ExecutionEventType.ANSWER_GENERATED,
+        ExecutionEventType.ASSISTANT_DELTA,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_agent_executes_all_tool_calls_before_next_reasoning_step() -> None:
+    llm = FakeLLM(
+        [
+            LLMResponse(
+                tool_calls=(
+                    LLMToolCall(id="call-1", name="lookup", arguments={"value": "SC"}),
+                    LLMToolCall(id="call-2", name="lookup", arguments={"value": "SP"}),
+                )
+            ),
+            LLMResponse(content="Duas consultas concluídas."),
+        ]
+    )
+    tool = FakeTool()
+    program = LangGraphAgentProgram(
+        llm=llm,
+        tools=ToolRegistry([tool]),
+    )
+
+    result = await program.execute(
+        execution_id="execution-1",
+        session_id="session-1",
+        question="Consulte dois valores",
+        observer=RecordingObserver(),
+        policy=RuntimePolicy(max_iterations=3, max_sql_retries=2),
+    )
+
+    assert result.answer == "Duas consultas concluídas."
+    assert result.result["tool_calls"] == 2
+    assert tool.calls == [{"value": "SC"}, {"value": "SP"}]
+
+    tool_messages = [message for message in llm.calls[1] if message.role == MessageRole.TOOL]
+    assert [message.tool_call_id for message in tool_messages] == ["call-1", "call-2"]
+    assert all('\"ok\": true' in message.content for message in tool_messages)
+
+    definitions = llm.tools[0]
+    assert len(definitions) == 1
+    assert definitions[0].name == "lookup"
+    assert definitions[0].input_schema == FakeTool.input_schema
+
+
+@pytest.mark.asyncio
+async def test_unknown_tool_is_returned_to_agent_as_recoverable_error() -> None:
+    llm = FakeLLM(
+        [
+            LLMResponse(
+                tool_calls=(
+                    LLMToolCall(id="call-unknown", name="missing", arguments={}),
+                )
+            ),
+            LLMResponse(content="Recuperei da ferramenta inexistente."),
+        ]
+    )
+    observer = RecordingObserver()
+    program = LangGraphAgentProgram(llm=llm, tools=ToolRegistry())
+
+    result = await program.execute(
+        execution_id="execution-1",
+        session_id="session-1",
+        question="Tente uma ferramenta inexistente",
+        observer=observer,
+        policy=RuntimePolicy(max_iterations=3, max_sql_retries=2),
+    )
+
+    assert result.answer == "Recuperei da ferramenta inexistente."
+    assert len(llm.calls) == 2
+    tool_messages = [message for message in llm.calls[1] if message.role == MessageRole.TOOL]
+    assert len(tool_messages) == 1
+    assert tool_messages[0].tool_call_id == "call-unknown"
+    assert '\"ok\": false' in tool_messages[0].content
+    assert "Unknown tool: missing" in tool_messages[0].content
+    assert ExecutionEventType.TOOL_FAILED in [event.type for event in observer.events]
