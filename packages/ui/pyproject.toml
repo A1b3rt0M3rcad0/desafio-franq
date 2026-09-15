@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "desafio-franq-ui"
+version = "0.1.0"
+description = "Streamlit presentation process for the Franq challenge"
+requires-python = ">=3.14"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["package.ui*"]
+namespaces = true
+
+[tool.setuptools.package-data]
+"package.ui.components" = ["assets/*.html", "assets/*.css", "assets/*.js"]

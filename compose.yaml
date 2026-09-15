@@ -1,7 +1,7 @@
 x-python-service: &python-service
   build:
     context: .
-    dockerfile: Dockerfile
+    dockerfile: docker/images/app/Dockerfile
   image: desafio-franq-app:local
   env_file:
     - .env
@@ -36,12 +36,11 @@ services:
       retries: ${REDIS_HEALTHCHECK_RETRIES}
 
   migrations:
-    build:
-      context: .
-      dockerfile: Dockerfile.migrations
-    image: desafio-franq-migrations:local
-    env_file:
-      - .env
+    <<: *python-service
+    command:
+      - sh
+      - -c
+      - cd packages/core && python migrations/bootstrap.py
     environment:
       AGENT_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:${POSTGRES_CONTAINER_PORT}/${POSTGRES_DB}
     depends_on:
@@ -91,6 +90,8 @@ services:
       AGENT_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:${POSTGRES_CONTAINER_PORT}/${POSTGRES_DB}
       REDIS_URL: redis://redis:${REDIS_CONTAINER_PORT}/0
       USER_DATABASE_PATH: /app/data/anexo_desafio_1.db
+    volumes:
+      - ./data/challenge-1/anexo_desafio_1.db:/app/data/anexo_desafio_1.db:ro
     depends_on:
       api:
         condition: service_healthy
@@ -100,7 +101,7 @@ services:
     command:
       - streamlit
       - run
-      - package/ui/app.py
+      - packages/ui/src/package/ui/app.py
       - --server.address=0.0.0.0
       - --server.port=8501
       - --server.headless=true

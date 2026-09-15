@@ -35,18 +35,19 @@ dev = [
     "ruff>=0.9.0",
 ]
 
-[tool.setuptools.packages.find]
-include = ["package*"]
-exclude = ["data*", "tests*"]
-
-[tool.setuptools.package-data]
-"package.agent.skills" = ["*/SKILL.md"]
-"package.ui.components" = ["assets/*.html", "assets/*.css", "assets/*.js"]
+[tool.setuptools]
+py-modules = []
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = [
+    "packages/core/src",
+    "packages/api/src",
+    "packages/runner/src",
+    "packages/ui/src",
+    ".",
+]
 
 [tool.ruff]
 line-length = 100
