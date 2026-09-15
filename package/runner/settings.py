@@ -59,6 +59,8 @@ class RunnerSettings(EnvSettings):
     agent_context_retriever_default_limit: int
     agent_context_retriever_max_limit: int
 
+    observer_projection_max_activities: int
+
     runner_id: str
     outbox_poll_interval_seconds: float
     outbox_batch_size: int
