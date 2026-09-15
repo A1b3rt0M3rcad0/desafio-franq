@@ -2,11 +2,11 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_deepseek import ChatDeepSeek
 
 from package.agent.llm.config import DeepSeekConfig
-from package.agent.llm.providers._langgraph import LangGraphLLMClient
+from package.agent.llm.providers._langchain import LangChainLLMClient
 
 
-class DeepSeekLLM(LangGraphLLMClient):
-    """DeepSeek implementation backed by ChatDeepSeek and executed through LangGraph."""
+class DeepSeekLLM(LangChainLLMClient):
+    """DeepSeek implementation backed by LangChain's ChatDeepSeek adapter."""
 
     def __init__(
         self,
