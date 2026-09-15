@@ -8,12 +8,14 @@ from langchain_core.messages import AIMessageChunk
 from package.agent.llm.config import OpenAIConfig, ReasoningEffort
 from package.agent.llm.models import LLMMessage, LLMToolDefinition, MessageRole
 from package.agent.llm.providers.openai import OpenAILLM
-from package.agent.llm.realtime import bind_text_delta_handler, current_text_delta_handler
-from package.agent.observer.events import ExecutionEvent, ExecutionEventType
-from package.agent.runtime.streaming import RuntimeStreamingEventSink
+from package.agent.llm.realtime import bind_text_delta_handler
 
 
 class StreamingToolFakeChatModel(GenericFakeChatModel):
+    def __init__(self) -> None:
+        super().__init__(messages=iter(["decisão sem streaming"]))
+        self.stream_calls = 0
+
     def bind_tools(self, tools, **kwargs):
         del tools, kwargs
         return self
@@ -27,6 +29,7 @@ class StreamingToolFakeChatModel(GenericFakeChatModel):
         **kwargs: Any,
     ) -> AsyncIterator[AIMessageChunk]:
         del input, config, stop, kwargs
+        self.stream_calls += 1
         yield AIMessageChunk(content="Olá ")
         yield AIMessageChunk(content="mundo")
 
@@ -53,8 +56,8 @@ def _tool_definition() -> LLMToolDefinition:
 
 
 @pytest.mark.asyncio
-async def test_tool_aware_invoke_streams_provider_text_deltas() -> None:
-    model = StreamingToolFakeChatModel(messages=iter(["unused"]))
+async def test_tool_aware_invoke_never_exposes_reasoning_text_as_public_deltas() -> None:
+    model = StreamingToolFakeChatModel()
     llm = OpenAILLM(_openai_config(), model=model)
     deltas: list[str] = []
 
@@ -67,79 +70,22 @@ async def test_tool_aware_invoke_streams_provider_text_deltas() -> None:
             tools=[_tool_definition()],
         )
 
-    assert response.content == "Olá mundo"
-    assert deltas == ["Olá ", "mundo"]
-    assert current_text_delta_handler() is None
-
-
-class CapturingSink:
-    def __init__(self) -> None:
-        self.events: list[ExecutionEvent] = []
-
-    async def emit(self, event: ExecutionEvent) -> None:
-        self.events.append(event)
+    assert response.content == "decisão sem streaming"
+    assert deltas == []
+    assert model.stream_calls == 0
 
 
 @pytest.mark.asyncio
-async def test_runtime_streaming_sink_suppresses_legacy_full_answer_duplicate() -> None:
-    delegate = CapturingSink()
-    sink = RuntimeStreamingEventSink(
-        delegate=delegate,
-        execution_id="execution-1",
-    )
+async def test_explicit_final_answer_stream_yields_provider_chunks() -> None:
+    model = StreamingToolFakeChatModel()
+    llm = OpenAILLM(_openai_config(), model=model)
 
-    await sink.emit_model_delta("Olá ")
-    await sink.emit_model_delta("mundo")
-    await sink.emit(
-        ExecutionEvent(
-            execution_id="execution-1",
-            type=ExecutionEventType.AGENT_DECISION,
-            payload={"decision": "answer"},
+    chunks = [
+        chunk.content
+        async for chunk in llm.stream(
+            [LLMMessage(role=MessageRole.USER, content="Diga olá")]
         )
-    )
-    await sink.emit(
-        ExecutionEvent(
-            execution_id="execution-1",
-            type=ExecutionEventType.ASSISTANT_DELTA,
-            payload={"content": "Olá mundo"},
-        )
-    )
-
-    deltas = [
-        event.payload["content"]
-        for event in delegate.events
-        if event.type == ExecutionEventType.ASSISTANT_DELTA
     ]
-    assert deltas == ["Olá ", "mundo"]
 
-
-@pytest.mark.asyncio
-async def test_runtime_streaming_sink_resets_deduplication_after_tool_action() -> None:
-    delegate = CapturingSink()
-    sink = RuntimeStreamingEventSink(
-        delegate=delegate,
-        execution_id="execution-1",
-    )
-
-    await sink.emit_model_delta("Vou consultar.")
-    await sink.emit(
-        ExecutionEvent(
-            execution_id="execution-1",
-            type=ExecutionEventType.AGENT_DECISION,
-            payload={"decision": "action"},
-        )
-    )
-    await sink.emit(
-        ExecutionEvent(
-            execution_id="execution-1",
-            type=ExecutionEventType.ASSISTANT_DELTA,
-            payload={"content": "Resposta final"},
-        )
-    )
-
-    deltas = [
-        event.payload["content"]
-        for event in delegate.events
-        if event.type == ExecutionEventType.ASSISTANT_DELTA
-    ]
-    assert deltas == ["Vou consultar.", "Resposta final"]
+    assert chunks == ["Olá ", "mundo"]
+    assert model.stream_calls == 1
