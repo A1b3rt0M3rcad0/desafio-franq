@@ -64,6 +64,7 @@ class RunnerSettings(EnvSettings):
     runner_id: str
     runner_health_ttl_seconds: int = 15
     runner_health_heartbeat_seconds: float = 5.0
+    runner_cancellation_poll_seconds: float = 0.25
     outbox_poll_interval_seconds: float
     outbox_batch_size: int
     outbox_max_attempts: int = 3
