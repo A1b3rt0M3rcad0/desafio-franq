@@ -23,9 +23,9 @@ class LangGraphAgentProgramResult:
 class LangGraphAgentProgram:
     """Generic iterative AgentProgram orchestrated by LangGraph.
 
-    The persistent graph state keeps conversation/tool results, but never the full
-    content of a loaded skill. Skill instructions are injected by ContextManager into
-    a temporary message list for exactly one reasoning call.
+    The graph owns the current execution context. ContextManager supplies durable
+    session continuity, bounded context compaction, lexical retrieval and ephemeral
+    skill context without exposing hidden chain-of-thought.
     """
 
     _AGENT = "agent"
@@ -83,7 +83,7 @@ class LangGraphAgentProgram:
         observer,
         policy: RuntimePolicy,
     ) -> LangGraphAgentProgramResult:
-        context = self._context_manager.build(
+        context = await self._context_manager.load_context(
             session_id=session_id,
             execution_id=execution_id,
             question=question,
@@ -96,6 +96,9 @@ class LangGraphAgentProgram:
                 type=ExecutionEventType.CONTEXT_LOADED,
                 payload={
                     "history_turns": len(context.history),
+                    "snapshot_sequence": (
+                        context.snapshot.sequence if context.snapshot is not None else None
+                    ),
                     "skills": [skill.name for skill in context.skills],
                     "tools": [tool.name for tool in context.tools],
                 },
@@ -124,6 +127,26 @@ class LangGraphAgentProgram:
             initial_state,
             config={"recursion_limit": recursion_limit},
         )
+
+        final_snapshot = await self._context_manager.finalize_execution(
+            session_id=session_id,
+            execution_id=execution_id,
+            question=question,
+            messages=final_state["messages"],
+            answer=final_state["answer"],
+        )
+        await observer.emit(
+            ExecutionEvent(
+                execution_id=execution_id,
+                type=ExecutionEventType.CONTEXT_SNAPSHOT_CREATED,
+                payload={
+                    "sequence": final_snapshot.sequence,
+                    "reason": final_snapshot.reason.value,
+                    "estimated_tokens": final_snapshot.estimated_tokens,
+                },
+            )
+        )
+
         return LangGraphAgentProgramResult(
             answer=final_state["answer"],
             result={
@@ -177,10 +200,38 @@ class LangGraphAgentProgram:
 
     async def _reasoning_node(self, state: AgentGraphState) -> dict[str, Any]:
         active_skills = tuple(state["active_skill_names"])
-        reasoning_messages = await self._context_manager.reasoning_messages(
+        prepared = await self._context_manager.prepare_reasoning(
             state["messages"],
+            session_id=state["session_id"],
+            execution_id=state["execution_id"],
+            question=state["question"],
+            tool_definitions=self._tool_definitions,
             skill_names=active_skills,
         )
+        if prepared.snapshot is not None:
+            await state["observer"].emit(
+                ExecutionEvent(
+                    execution_id=state["execution_id"],
+                    type=ExecutionEventType.CONTEXT_BUDGET_EXCEEDED,
+                    payload={
+                        "iteration": state["iteration"],
+                        "dynamic_budget_tokens": prepared.budget.dynamic_budget_tokens,
+                        "dynamic_tokens_after_compaction": prepared.budget.dynamic_tokens,
+                    },
+                )
+            )
+            await state["observer"].emit(
+                ExecutionEvent(
+                    execution_id=state["execution_id"],
+                    type=ExecutionEventType.CONTEXT_SNAPSHOT_CREATED,
+                    payload={
+                        "sequence": prepared.snapshot.sequence,
+                        "reason": prepared.snapshot.reason.value,
+                        "estimated_tokens": prepared.snapshot.estimated_tokens,
+                    },
+                )
+            )
+
         if active_skills:
             await state["observer"].emit(
                 ExecutionEvent(
@@ -197,12 +248,16 @@ class LangGraphAgentProgram:
             ExecutionEvent(
                 execution_id=state["execution_id"],
                 type=ExecutionEventType.LLM_STARTED,
-                payload={"iteration": state["iteration"]},
+                payload={
+                    "iteration": state["iteration"],
+                    "context_dynamic_tokens": prepared.budget.dynamic_tokens,
+                    "context_dynamic_budget_tokens": prepared.budget.dynamic_budget_tokens,
+                },
             )
         )
         try:
             response = await self._llm.invoke(
-                reasoning_messages,
+                prepared.reasoning_messages,
                 tools=self._tool_definitions,
             )
         finally:
@@ -223,7 +278,7 @@ class LangGraphAgentProgram:
             content=response.content,
             tool_calls=response.tool_calls,
         )
-        messages = [*state["messages"], assistant_message]
+        messages = [*prepared.persistent_messages, assistant_message]
 
         decision = "action" if response.tool_calls else "answer"
         await state["observer"].emit(
@@ -273,49 +328,61 @@ class LangGraphAgentProgram:
         active_skill_names: list[str] = []
         skill_use_count = 0
         external_calls: list[LLMToolCall] = []
+        context_search_calls: list[LLMToolCall] = []
 
         for call in calls:
-            if not self._context_manager.is_skill_request(call):
-                external_calls.append(call)
-                continue
-            try:
-                names = self._context_manager.requested_skills(call)
-                for name in names:
-                    if name not in active_skill_names:
-                        active_skill_names.append(name)
-                skill_use_count += len(names)
-                contents[call.id] = _serialize_tool_message(
-                    ok=True,
-                    result={
-                        "skills": list(names),
-                        "scope": "next_reasoning_step",
-                    },
-                )
-                await state["observer"].emit(
-                    ExecutionEvent(
-                        execution_id=state["execution_id"],
-                        type=ExecutionEventType.SKILL_REQUESTED,
-                        payload={
-                            "iteration": state["iteration"],
+            if self._context_manager.is_skill_request(call):
+                try:
+                    names = self._context_manager.requested_skills(call)
+                    for name in names:
+                        if name not in active_skill_names:
+                            active_skill_names.append(name)
+                    skill_use_count += len(names)
+                    contents[call.id] = _serialize_tool_message(
+                        ok=True,
+                        result={
                             "skills": list(names),
-                            "tool_call_id": call.id,
+                            "scope": "next_reasoning_step",
                         },
                     )
-                )
-            except Exception as exc:
-                contents[call.id] = _serialize_tool_message(ok=False, error=str(exc))
-                await state["observer"].emit(
-                    ExecutionEvent(
-                        execution_id=state["execution_id"],
-                        type=ExecutionEventType.TOOL_FAILED,
-                        payload={
-                            "iteration": state["iteration"],
-                            "tool": call.name,
-                            "tool_call_id": call.id,
-                            "error": str(exc),
-                        },
+                    await state["observer"].emit(
+                        ExecutionEvent(
+                            execution_id=state["execution_id"],
+                            type=ExecutionEventType.SKILL_REQUESTED,
+                            payload={
+                                "iteration": state["iteration"],
+                                "skills": list(names),
+                                "tool_call_id": call.id,
+                            },
+                        )
                     )
-                )
+                except Exception as exc:
+                    contents[call.id] = _serialize_tool_message(ok=False, error=str(exc))
+                    await state["observer"].emit(
+                        ExecutionEvent(
+                            execution_id=state["execution_id"],
+                            type=ExecutionEventType.TOOL_FAILED,
+                            payload={
+                                "iteration": state["iteration"],
+                                "tool": call.name,
+                                "tool_call_id": call.id,
+                                "error": str(exc),
+                            },
+                        )
+                    )
+                continue
+
+            if self._context_manager.is_global_context_search(call):
+                context_search_calls.append(call)
+                continue
+
+            external_calls.append(call)
+
+        if context_search_calls:
+            results = await asyncio.gather(
+                *(self._execute_context_search_call(state, call) for call in context_search_calls)
+            )
+            contents.update(dict(results))
 
         if external_calls:
             results = await self._execute_external_calls(state, external_calls)
@@ -335,9 +402,73 @@ class LangGraphAgentProgram:
             "messages": messages,
             "pending_tool_calls": [],
             "active_skill_names": active_skill_names,
-            "tool_call_count": state["tool_call_count"] + len(external_calls),
+            "tool_call_count": (
+                state["tool_call_count"] + len(external_calls) + len(context_search_calls)
+            ),
             "skill_use_count": state["skill_use_count"] + skill_use_count,
         }
+
+    async def _execute_context_search_call(
+        self,
+        state: AgentGraphState,
+        call: LLMToolCall,
+    ) -> tuple[str, str]:
+        await state["observer"].emit(
+            ExecutionEvent(
+                execution_id=state["execution_id"],
+                type=ExecutionEventType.TOOL_STARTED,
+                payload={
+                    "iteration": state["iteration"],
+                    "tool": call.name,
+                    "tool_call_id": call.id,
+                    "arguments": call.arguments,
+                },
+            )
+        )
+        try:
+            result = await self._context_manager.search_global_context(
+                session_id=state["session_id"],
+                call=call,
+            )
+            content = _serialize_tool_message(ok=True, result=result)
+            await state["observer"].emit(
+                ExecutionEvent(
+                    execution_id=state["execution_id"],
+                    type=ExecutionEventType.CONTEXT_RETRIEVED,
+                    payload={
+                        "iteration": state["iteration"],
+                        "query": result["query"],
+                        "matches": len(result["matches"]),
+                    },
+                )
+            )
+            await state["observer"].emit(
+                ExecutionEvent(
+                    execution_id=state["execution_id"],
+                    type=ExecutionEventType.TOOL_COMPLETED,
+                    payload={
+                        "iteration": state["iteration"],
+                        "tool": call.name,
+                        "tool_call_id": call.id,
+                        "result": {"matches": len(result["matches"])},
+                    },
+                )
+            )
+            return call.id, content
+        except Exception as exc:
+            await state["observer"].emit(
+                ExecutionEvent(
+                    execution_id=state["execution_id"],
+                    type=ExecutionEventType.TOOL_FAILED,
+                    payload={
+                        "iteration": state["iteration"],
+                        "tool": call.name,
+                        "tool_call_id": call.id,
+                        "error": str(exc),
+                    },
+                )
+            )
+            return call.id, _serialize_tool_message(ok=False, error=str(exc))
 
     async def _execute_external_calls(
         self,
@@ -374,9 +505,11 @@ class LangGraphAgentProgram:
                 },
             )
         )
+        failed = False
         try:
             tool = self._tools.get(call.name)
             result = await tool.invoke(call.arguments)
+            content = _serialize_tool_message(ok=True, result=result)
             await state["observer"].emit(
                 ExecutionEvent(
                     execution_id=state["execution_id"],
@@ -389,8 +522,9 @@ class LangGraphAgentProgram:
                     },
                 )
             )
-            return _serialize_tool_message(ok=True, result=result)
         except Exception as exc:
+            failed = True
+            content = _serialize_tool_message(ok=False, error=str(exc))
             await state["observer"].emit(
                 ExecutionEvent(
                     execution_id=state["execution_id"],
@@ -403,7 +537,17 @@ class LangGraphAgentProgram:
                     },
                 )
             )
-            return _serialize_tool_message(ok=False, error=str(exc))
+
+        await self._context_manager.record_tool_observation(
+            session_id=state["session_id"],
+            execution_id=state["execution_id"],
+            tool_name=call.name,
+            tool_call_id=call.id,
+            arguments=call.arguments,
+            content=content,
+            failed=failed,
+        )
+        return content
 
     async def _answer_node(self, state: AgentGraphState) -> dict[str, Any]:
         answer = state["answer"].strip() or "Não foi possível gerar uma resposta final."

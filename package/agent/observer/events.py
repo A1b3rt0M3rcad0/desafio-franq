@@ -14,6 +14,9 @@ class ExecutionEventType(StrEnum):
     AGENT_MAX_ITERATIONS_REACHED = "agent.max_iterations_reached"
     ANSWER_GENERATED = "answer.generated"
     CONTEXT_LOADED = "context.loaded"
+    CONTEXT_BUDGET_EXCEEDED = "context.budget.exceeded"
+    CONTEXT_SNAPSHOT_CREATED = "context.snapshot.created"
+    CONTEXT_RETRIEVED = "context.retrieved"
     SKILL_REQUESTED = "skill.requested"
     SKILL_CONTEXT_LOADED = "skill.context.loaded"
     SKILL_CONTEXT_RELEASED = "skill.context.released"
@@ -39,6 +42,9 @@ TRACEABLE_EVENT_TYPES = {
     ExecutionEventType.AGENT_MAX_ITERATIONS_REACHED,
     ExecutionEventType.ANSWER_GENERATED,
     ExecutionEventType.CONTEXT_LOADED,
+    ExecutionEventType.CONTEXT_BUDGET_EXCEEDED,
+    ExecutionEventType.CONTEXT_SNAPSHOT_CREATED,
+    ExecutionEventType.CONTEXT_RETRIEVED,
     ExecutionEventType.SKILL_REQUESTED,
     ExecutionEventType.SKILL_CONTEXT_LOADED,
     ExecutionEventType.SKILL_CONTEXT_RELEASED,

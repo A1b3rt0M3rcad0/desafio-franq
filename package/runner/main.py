@@ -4,6 +4,7 @@ import signal
 from package.agent.composer.agent import compose_skills, compose_tools
 from package.agent.composer.runtime import compose_agent_program
 from package.runner.composition.agent import AgentRuntimeFactory
+from package.runner.composition.context import compose_context_manager
 from package.runner.composition.database import compose_agent_database
 from package.runner.composition.llm import compose_llm
 from package.runner.composition.redis import compose_redis
@@ -35,7 +36,25 @@ async def run() -> None:
     tools = compose_tools(database_tool)
     skills = compose_skills()
     llm = compose_llm(settings)
-    program = compose_agent_program(llm=llm, tools=tools, skills=skills)
+    context_manager = compose_context_manager(
+        llm=llm,
+        skills=skills,
+        session_factory=session_factory,
+        context_window_tokens=settings.agent_context_window_tokens,
+        context_budget_percent=settings.agent_context_budget_percent,
+        chars_per_token=settings.agent_context_chars_per_token,
+        summary_fallback_max_messages=settings.agent_context_summary_fallback_max_messages,
+        summary_fallback_max_chars_per_message=(
+            settings.agent_context_summary_fallback_max_chars_per_message
+        ),
+        retriever_default_limit=settings.agent_context_retriever_default_limit,
+        retriever_max_limit=settings.agent_context_retriever_max_limit,
+    )
+    program = compose_agent_program(
+        llm=llm,
+        tools=tools,
+        context_manager=context_manager,
+    )
     runtime_factory = AgentRuntimeFactory(
         program=program,
         hot_state=hot_state,

@@ -4,8 +4,22 @@ from typing import Any
 
 import pytest
 
+from package.agent.context.budget import (
+    ApproximateTokenEstimator,
+    ContextBudgetManager,
+    ContextBudgetPolicy,
+)
 from package.agent.context.builder import ContextBuilder
 from package.agent.context.manager import ContextManager, SKILL_REQUEST_TOOL_NAME
+from package.agent.context.memory import (
+    InMemoryContextSnapshotStore,
+    InMemoryGlobalContextStore,
+)
+from package.agent.context.models import ContextSummary, GlobalContextKind
+from package.agent.context.retrieval import (
+    GLOBAL_CONTEXT_SEARCH_TOOL_NAME,
+    GlobalContextRetriever,
+)
 from package.agent.llm.models import (
     LLMChunk,
     LLMMessage,
@@ -49,6 +63,20 @@ class FakeLLM:
     async def stream(self, messages: Sequence[LLMMessage]) -> AsyncIterator[LLMChunk]:
         if False:
             yield LLMChunk(content="")
+
+
+class FakeSummarizer:
+    async def summarize(self, *, previous_snapshot, messages, question):
+        facts = [
+            message.content
+            for message in messages
+            if message.role == MessageRole.ASSISTANT and message.content.strip()
+        ]
+        return ContextSummary(
+            current_request=question,
+            established_facts=facts[-3:],
+            continuity_notes=["execution compacted"],
+        )
 
 
 class FakeTool:
@@ -117,23 +145,51 @@ def _policy(*, max_iterations: int = 4, max_parallel: int = 3) -> RuntimePolicy:
     )
 
 
+def _program_components(
+    llm: FakeLLM,
+    *,
+    tools: list[Any] | None = None,
+    skills: list[Any] | None = None,
+):
+    tool_registry = ToolRegistry(tools or [])
+    snapshots = InMemoryContextSnapshotStore()
+    global_context = InMemoryGlobalContextStore()
+    context_manager = ContextManager(
+        builder=ContextBuilder(),
+        skills=SkillRegistry(skills or []),
+        system_prompt=SYSTEM_PROMPT,
+        budget_manager=ContextBudgetManager(
+            estimator=ApproximateTokenEstimator(chars_per_token=4.0),
+            policy=ContextBudgetPolicy(
+                model_context_window_tokens=1_000_000,
+                dynamic_context_percentage=25.0,
+            ),
+        ),
+        summarizer=FakeSummarizer(),
+        snapshot_store=snapshots,
+        global_context_store=global_context,
+        retriever=GlobalContextRetriever(
+            store=global_context,
+            default_limit=5,
+            max_limit=10,
+        ),
+    )
+    program = LangGraphAgentProgram(
+        llm=llm,
+        tools=tool_registry,
+        context_manager=context_manager,
+    )
+    return program, snapshots, global_context
+
+
 def _program(
     llm: FakeLLM,
     *,
     tools: list[Any] | None = None,
     skills: list[Any] | None = None,
 ) -> LangGraphAgentProgram:
-    tool_registry = ToolRegistry(tools or [])
-    context_manager = ContextManager(
-        builder=ContextBuilder(),
-        skills=SkillRegistry(skills or []),
-        system_prompt=SYSTEM_PROMPT,
-    )
-    return LangGraphAgentProgram(
-        llm=llm,
-        tools=tool_registry,
-        context_manager=context_manager,
-    )
+    program, _, _ = _program_components(llm, tools=tools, skills=skills)
+    return program
 
 
 @pytest.mark.asyncio
@@ -170,9 +226,11 @@ async def test_agent_loops_from_tool_back_to_reasoning_until_answer() -> None:
     assert tool.calls == [{"value": "SC"}]
     assert len(llm.calls) == 2
     assert any(message.tool_call_id == "call-1" for message in llm.calls[1])
-    assert ExecutionEventType.CONTEXT_LOADED in [event.type for event in observer.events]
-    assert ExecutionEventType.TOOL_COMPLETED in [event.type for event in observer.events]
-    assert ExecutionEventType.ANSWER_GENERATED in [event.type for event in observer.events]
+    event_types = [event.type for event in observer.events]
+    assert ExecutionEventType.CONTEXT_LOADED in event_types
+    assert ExecutionEventType.TOOL_COMPLETED in event_types
+    assert ExecutionEventType.ANSWER_GENERATED in event_types
+    assert ExecutionEventType.CONTEXT_SNAPSHOT_CREATED in event_types
 
 
 @pytest.mark.asyncio
@@ -226,10 +284,7 @@ async def test_skill_content_is_loaded_for_one_reasoning_step_only() -> None:
     assert "FULL SKILL CONTENT" in active_skill_messages[0].content
 
     third_call = llm.calls[2]
-    assert all(
-        "FULL SKILL CONTENT" not in message.content
-        for message in third_call
-    )
+    assert all("FULL SKILL CONTENT" not in message.content for message in third_call)
     assert any(message.tool_call_id == "skill-1" for message in third_call)
 
     event_types = [event.type for event in observer.events]
@@ -304,7 +359,7 @@ async def test_agent_stops_when_max_iterations_is_reached() -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_can_answer_without_calling_tools() -> None:
+async def test_agent_can_answer_without_calling_external_tools() -> None:
     llm = FakeLLM([LLMResponse(content="Resposta direta.")])
     observer = RecordingObserver()
     program = _program(llm)
@@ -326,7 +381,9 @@ async def test_agent_can_answer_without_calling_tools() -> None:
     }
     assert len(llm.calls) == 1
     assert [message.role for message in llm.calls[0]] == [MessageRole.SYSTEM, MessageRole.USER]
-    assert llm.tools == [()]
+    assert [definition.name for definition in llm.tools[0]] == [
+        GLOBAL_CONTEXT_SEARCH_TOOL_NAME
+    ]
     assert [event.type for event in observer.events] == [
         ExecutionEventType.CONTEXT_LOADED,
         ExecutionEventType.AGENT_ITERATION_STARTED,
@@ -335,6 +392,7 @@ async def test_agent_can_answer_without_calling_tools() -> None:
         ExecutionEventType.AGENT_DECISION,
         ExecutionEventType.ANSWER_GENERATED,
         ExecutionEventType.ASSISTANT_DELTA,
+        ExecutionEventType.CONTEXT_SNAPSHOT_CREATED,
     ]
 
 
@@ -400,3 +458,78 @@ async def test_unknown_tool_is_returned_to_agent_as_recoverable_error() -> None:
     assert '\"ok\": false' in tool_messages[0].content
     assert "Unknown tool: missing" in tool_messages[0].content
     assert ExecutionEventType.TOOL_FAILED in [event.type for event in observer.events]
+
+
+@pytest.mark.asyncio
+async def test_agent_can_retrieve_information_lost_from_current_snapshot() -> None:
+    llm = FakeLLM(
+        [
+            LLMResponse(
+                tool_calls=(
+                    LLMToolCall(
+                        id="context-1",
+                        name=GLOBAL_CONTEXT_SEARCH_TOOL_NAME,
+                        arguments={"query": "WhatsApp maio"},
+                    ),
+                )
+            ),
+            LLMResponse(content="Recuperei a regra antiga."),
+        ]
+    )
+    program, _, global_context = _program_components(llm)
+    await global_context.append(
+        session_id="session-1",
+        execution_id="execution-old",
+        kind=GlobalContextKind.USER_MESSAGE,
+        content="Em maio, a campanha WhatsApp deve excluir clientes inativos.",
+    )
+    observer = RecordingObserver()
+
+    result = await program.execute(
+        execution_id="execution-1",
+        session_id="session-1",
+        question="Qual era a regra antiga?",
+        observer=observer,
+        policy=_policy(),
+    )
+
+    assert result.answer == "Recuperei a regra antiga."
+    retrieved_messages = [
+        message
+        for message in llm.calls[1]
+        if message.role == MessageRole.TOOL and message.tool_call_id == "context-1"
+    ]
+    assert len(retrieved_messages) == 1
+    assert "excluir clientes inativos" in retrieved_messages[0].content
+    assert ExecutionEventType.CONTEXT_RETRIEVED in [event.type for event in observer.events]
+
+
+@pytest.mark.asyncio
+async def test_next_execution_starts_from_previous_execution_snapshot() -> None:
+    llm = FakeLLM(
+        [
+            LLMResponse(content="Conclusão da primeira execução."),
+            LLMResponse(content="Continuidade da segunda execução."),
+        ]
+    )
+    program, snapshots, _ = _program_components(llm)
+
+    await program.execute(
+        execution_id="execution-1",
+        session_id="session-1",
+        question="Primeiro pedido",
+        observer=RecordingObserver(),
+        policy=_policy(),
+    )
+    await program.execute(
+        execution_id="execution-2",
+        session_id="session-1",
+        question="Continue",
+        observer=RecordingObserver(),
+        policy=_policy(),
+    )
+
+    assert len(snapshots.snapshots) == 2
+    second_prompt = "\n".join(message.content for message in llm.calls[1])
+    assert "Conclusão da primeira execução." in second_prompt
+    assert "Session continuity snapshot" in second_prompt

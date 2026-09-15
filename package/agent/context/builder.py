@@ -2,6 +2,7 @@ from collections.abc import Sequence
 
 from package.agent.context.models import (
     AgentContext,
+    ContextSnapshot,
     ConversationTurn,
     SkillDescriptor,
     ToolDescriptor,
@@ -18,6 +19,7 @@ class ContextBuilder:
         history: Sequence[ConversationTurn] = (),
         skills: Sequence[SkillDescriptor] = (),
         tools: Sequence[ToolDescriptor] = (),
+        snapshot: ContextSnapshot | None = None,
     ) -> AgentContext:
         return AgentContext(
             session_id=session_id,
@@ -26,4 +28,5 @@ class ContextBuilder:
             history=list(history),
             skills=list(skills),
             tools=list(tools),
+            snapshot=snapshot,
         )
