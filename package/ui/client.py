@@ -38,16 +38,38 @@ class FranqApiClient:
             json_body={"metadata": {"client": "streamlit"}},
         )
 
-    def list_sessions(self, *, limit: int = 50) -> list[dict[str, Any]]:
+    def start_session(self, *, question: str) -> dict[str, Any]:
+        return self._request_json(
+            "POST",
+            "/sessions/start",
+            json_body={
+                "question": question,
+                "metadata": {"client": "streamlit"},
+            },
+        )
+
+    def list_sessions(self, *, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
         if limit < 1:
             raise ValueError("limit must be greater than zero")
-        payload = self._request_json("GET", f"/sessions?limit={limit}")
+        if offset < 0:
+            raise ValueError("offset cannot be negative")
+        payload = self._request_json("GET", f"/sessions?limit={limit}&offset={offset}")
         if not isinstance(payload, list):
             raise ValueError("Expected the sessions endpoint to return a list")
         return payload
 
     def get_session(self, session_id: str) -> dict[str, Any]:
         return self._request_json("GET", f"/sessions/{session_id}")
+
+    def update_session_title(self, session_id: str, title: str) -> dict[str, Any]:
+        return self._request_json(
+            "PATCH",
+            f"/sessions/{session_id}",
+            json_body={"title": title},
+        )
+
+    def delete_session(self, session_id: str) -> None:
+        self._request_json("DELETE", f"/sessions/{session_id}")
 
     def list_session_executions(self, session_id: str) -> list[dict[str, Any]]:
         payload = self._request_json("GET", f"/sessions/{session_id}/executions")
@@ -109,6 +131,8 @@ class FranqApiClient:
                     detail=detail,
                     response=response,
                 )
+            if response.status_code == 204 or not response.content:
+                return None
             return response.json()
 
 
