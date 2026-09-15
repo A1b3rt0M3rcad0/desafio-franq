@@ -46,11 +46,7 @@ def test_conversation_sidebar_delete_flow_and_selected_contrast(page) -> None:
         _wait_for_port("127.0.0.1", port)
         page.goto(f"http://127.0.0.1:{port}")
 
-        iframe = page.locator("iframe").first
-        iframe.wait_for(state="attached")
-        frame = page.frame_locator("iframe").first
-
-        active = frame.locator('.conversation-item[data-session-id="session-1"]')
+        active = page.locator('.conversation-item[data-session-id="session-1"]')
         active.wait_for(state="visible")
         styles = active.evaluate(
             """
@@ -72,15 +68,15 @@ def test_conversation_sidebar_delete_flow_and_selected_contrast(page) -> None:
         assert int(styles["fontWeight"]) >= 600
 
         active.click(button="right")
-        menu = frame.locator("#conversation-context-menu")
+        menu = page.locator("#conversation-context-menu")
         menu.wait_for(state="visible")
 
-        frame.locator("#conversation-delete-action").click()
-        confirmation = frame.locator("#conversation-delete-confirm")
+        page.locator("#conversation-delete-action").click()
+        confirmation = page.locator("#conversation-delete-confirm")
         confirmation.wait_for(state="visible")
-        assert frame.locator("#conversation-context-actions").is_hidden()
+        assert page.locator("#conversation-context-actions").is_hidden()
 
-        frame.locator("#conversation-delete-confirm-action").click()
+        page.locator("#conversation-delete-confirm-action").click()
         page.wait_for_url("**delete_session_id=session-1**")
         assert "delete_session_id=session-1" in page.url
     finally:
