@@ -1,0 +1,156 @@
+.franq-activity-panel {
+  width: 100%;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  border-radius: 0.6rem;
+  background: rgba(255, 255, 255, 0.015);
+  overflow: hidden;
+}
+
+.franq-activity-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2.55rem;
+  padding: 0.55rem 0.75rem;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  font-size: 0.84rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.franq-activity-summary::-webkit-details-marker {
+  display: none;
+}
+
+.franq-activity-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.8rem;
+  flex: 0 0 0.8rem;
+  transform: rotate(0deg);
+  transition: transform 120ms ease;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.franq-activity-panel[open] .franq-activity-chevron {
+  transform: rotate(90deg);
+}
+
+.franq-activity-state-indicator {
+  width: 0.72rem;
+  height: 0.72rem;
+  flex: 0 0 0.72rem;
+  border-radius: 999px;
+  border: 2px solid currentColor;
+  opacity: 0.9;
+}
+
+.franq-activity-panel--running .franq-activity-state-indicator {
+  border-right-color: transparent;
+  animation: franq-activity-spin 0.8s linear infinite;
+}
+
+.franq-activity-panel--complete .franq-activity-state-indicator {
+  border: 0;
+  width: 0.8rem;
+  height: 0.8rem;
+}
+
+.franq-activity-panel--complete .franq-activity-state-indicator::before {
+  content: "✓";
+  display: block;
+  font-size: 0.84rem;
+  line-height: 0.8rem;
+}
+
+.franq-activity-panel--error .franq-activity-state-indicator {
+  border: 0;
+  width: 0.8rem;
+  height: 0.8rem;
+}
+
+.franq-activity-panel--error .franq-activity-state-indicator::before {
+  content: "✕";
+  display: block;
+  font-size: 0.84rem;
+  line-height: 0.8rem;
+}
+
+.franq-activity-summary-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.franq-activity-timeline {
+  max-height: __PANEL_HEIGHT_PX__px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 0.48rem;
+  padding: 0.55rem 0.75rem 0.65rem;
+  border-top: 1px solid rgba(128, 128, 128, 0.25);
+  scrollbar-gutter: stable;
+}
+
+.franq-activity-item {
+  display: block;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.franq-activity-item-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.38rem;
+  min-width: 0;
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.franq-activity-item-title > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.franq-activity-item-icon {
+  flex: 0 0 auto;
+  width: 0.8rem;
+  text-align: center;
+  line-height: 1.35;
+}
+
+.franq-activity-item-detail {
+  margin-top: 0.12rem;
+  margin-left: 1.18rem;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  opacity: 0.72;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.franq-activity-item-sql {
+  margin: 0.22rem 0 0 1.18rem;
+  padding: 0.45rem 0.55rem;
+  max-height: 88px;
+  max-width: calc(100% - 1.18rem);
+  overflow-y: auto;
+  overflow-x: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  border-radius: 0.35rem;
+  font-size: 0.7rem;
+  line-height: 1.35;
+}
+
+@keyframes franq-activity-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

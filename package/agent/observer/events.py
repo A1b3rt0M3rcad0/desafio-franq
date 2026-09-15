@@ -1,0 +1,91 @@
+from datetime import datetime, timezone
+from enum import StrEnum
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+
+class ExecutionPhase(StrEnum):
+    PENDING = "pending"
+    CONTEXT = "context"
+    REASONING = "reasoning"
+    SKILL = "skill"
+    TOOL = "tool"
+    RESPONSE_PREPARING = "response_preparing"
+    RESPONSE_STREAMING = "response_streaming"
+    FINALIZING = "finalizing"
+    CANCEL_REQUESTED = "cancel_requested"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class ExecutionEventType(StrEnum):
+    EXECUTION_STARTED = "execution.started"
+    EXECUTION_PHASE_CHANGED = "execution.phase.changed"
+    EXECUTION_CANCEL_REQUESTED = "execution.cancel_requested"
+    EXECUTION_CANCELLED = "execution.cancelled"
+    EXECUTION_COMPLETED = "execution.completed"
+    EXECUTION_FAILED = "execution.failed"
+    AGENT_ITERATION_STARTED = "agent.iteration.started"
+    AGENT_DECISION = "agent.decision"
+    AGENT_MAX_ITERATIONS_REACHED = "agent.max_iterations_reached"
+    ANSWER_STARTED = "answer.started"
+    ANSWER_GENERATED = "answer.generated"
+    ANSWER_COMPLETED = "answer.completed"
+    CONTEXT_LOADED = "context.loaded"
+    CONTEXT_BUDGET_EXCEEDED = "context.budget.exceeded"
+    CONTEXT_SNAPSHOT_CREATED = "context.snapshot.created"
+    CONTEXT_RETRIEVED = "context.retrieved"
+    SKILL_REQUESTED = "skill.requested"
+    SKILL_CONTEXT_LOADED = "skill.context.loaded"
+    SKILL_CONTEXT_RELEASED = "skill.context.released"
+    SCHEMA_INSPECTED = "schema.inspected"
+    PLAN_CREATED = "plan.created"
+    LLM_STARTED = "llm.started"
+    ASSISTANT_DELTA = "assistant.delta"
+    LLM_COMPLETED = "llm.completed"
+    TOOL_STARTED = "tool.started"
+    TOOL_COMPLETED = "tool.completed"
+    TOOL_FAILED = "tool.failed"
+    SQL_GENERATED = "sql.generated"
+    SQL_EXECUTED = "sql.executed"
+    VISUALIZATION_SELECTED = "visualization.selected"
+
+
+TRACEABLE_EVENT_TYPES = {
+    ExecutionEventType.EXECUTION_STARTED,
+    ExecutionEventType.EXECUTION_PHASE_CHANGED,
+    ExecutionEventType.EXECUTION_CANCEL_REQUESTED,
+    ExecutionEventType.EXECUTION_CANCELLED,
+    ExecutionEventType.EXECUTION_COMPLETED,
+    ExecutionEventType.EXECUTION_FAILED,
+    ExecutionEventType.AGENT_ITERATION_STARTED,
+    ExecutionEventType.AGENT_DECISION,
+    ExecutionEventType.AGENT_MAX_ITERATIONS_REACHED,
+    ExecutionEventType.ANSWER_STARTED,
+    ExecutionEventType.ANSWER_GENERATED,
+    ExecutionEventType.ANSWER_COMPLETED,
+    ExecutionEventType.CONTEXT_LOADED,
+    ExecutionEventType.CONTEXT_BUDGET_EXCEEDED,
+    ExecutionEventType.CONTEXT_SNAPSHOT_CREATED,
+    ExecutionEventType.CONTEXT_RETRIEVED,
+    ExecutionEventType.SKILL_REQUESTED,
+    ExecutionEventType.SKILL_CONTEXT_LOADED,
+    ExecutionEventType.SKILL_CONTEXT_RELEASED,
+    ExecutionEventType.SCHEMA_INSPECTED,
+    ExecutionEventType.PLAN_CREATED,
+    ExecutionEventType.TOOL_STARTED,
+    ExecutionEventType.TOOL_COMPLETED,
+    ExecutionEventType.TOOL_FAILED,
+    ExecutionEventType.SQL_GENERATED,
+    ExecutionEventType.SQL_EXECUTED,
+    ExecutionEventType.VISUALIZATION_SELECTED,
+}
+
+
+class ExecutionEvent(BaseModel):
+    execution_id: str
+    type: ExecutionEventType
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

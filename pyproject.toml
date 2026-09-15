@@ -1,7 +1,56 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "desafio-franq"
 version = "0.1.0"
-description = "Add your description here"
+description = "Agentic data assistant architecture for the Franq AI Engineer challenge"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "alembic>=1.14.0",
+    "asyncpg>=0.30.0",
+    "deepseek-tokenizer>=0.3.0",
+    "fastapi>=0.115.0",
+    "httpx>=0.28.0",
+    "langchain-deepseek>=1.1.0",
+    "langchain-openai>=1.6.0",
+    "langgraph>=1.1.0",
+    "pandas>=2.3.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "python-dotenv>=1.0.0",
+    "redis>=5.2.0",
+    "sqlalchemy>=2.0.36",
+    "streamlit>=1.63.0",
+    "uvicorn[standard]>=0.34.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.25.0",
+    "pytest-playwright>=0.7.0",
+    "ruff>=0.9.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["package*"]
+exclude = ["data*", "tests*"]
+
+[tool.setuptools.package-data]
+"package.agent.skills" = ["*/SKILL.md"]
+"package.ui.components" = ["assets/*.html", "assets/*.css", "assets/*.js"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]

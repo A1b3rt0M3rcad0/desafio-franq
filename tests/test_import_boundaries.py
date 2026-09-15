@@ -1,0 +1,32 @@
+import ast
+from pathlib import Path
+
+
+def _imports(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    result: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            result.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            result.add(node.module)
+    return result
+
+
+def test_package_dependency_boundaries() -> None:
+    root = Path("package")
+    violations: list[str] = []
+
+    rules = {
+        "agent": ("package.api", "package.runner"),
+        "api": ("package.runner",),
+        "runner": ("package.api",),
+    }
+
+    for package_name, forbidden in rules.items():
+        for path in (root / package_name).rglob("*.py"):
+            for imported in _imports(path):
+                if imported.startswith(forbidden):
+                    violations.append(f"{path}: {imported}")
+
+    assert violations == []

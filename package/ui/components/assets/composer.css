@@ -1,0 +1,9 @@
+div[data-testid="stForm"] {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  background: var(--background-color);
+  padding-top: 0.35rem;
+  padding-bottom: 0.5rem;
+  border: 0;
+}
