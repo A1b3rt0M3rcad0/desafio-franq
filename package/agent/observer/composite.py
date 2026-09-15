@@ -1,11 +1,11 @@
-from package.agent.observer.contracts import ExecutionObserver
+from package.agent.observer.contracts import ExecutionEventSink
 from package.agent.observer.events import ExecutionEvent
 
 
-class CompositeExecutionObserver:
-    def __init__(self, *observers: ExecutionObserver) -> None:
-        self._observers = observers
+class CompositeExecutionEventSink:
+    def __init__(self, *sinks: ExecutionEventSink) -> None:
+        self._sinks = sinks
 
     async def emit(self, event: ExecutionEvent) -> None:
-        for observer in self._observers:
-            await observer.emit(event)
+        for sink in self._sinks:
+            await sink.emit(event)
