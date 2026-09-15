@@ -7,59 +7,62 @@ from package.agent.llm.models import (
     LLMChunk,
     LLMMessage,
     LLMResponse,
-    LLMToolCall,
     LLMToolDefinition,
     MessageRole,
 )
-from package.agent.observer.events import ExecutionEvent, ExecutionEventType
 from package.agent.runtime.loop import RuntimePolicy
 from package.agent.runtime.program import LangGraphAgentProgram
-from package.agent.tools.presentation.tool import PresentationTool
 from package.agent.tools.registry import ToolRegistry
 
 
-class RecordingObserver:
-    def __init__(self) -> None:
-        self.events: list[ExecutionEvent] = []
+RICH_ANSWER = """Os canais apresentam volumes diferentes de reclamações.
 
-    async def emit(self, event: ExecutionEvent) -> None:
-        self.events.append(event)
+```visualization
+{"version":1,"type":"bar","title":"Reclamações por canal","data":{"columns":["canal","reclamacoes"],"rows":[{"canal":"Telefone","reclamacoes":19},{"canal":"Chat","reclamacoes":18}]},"x":"canal","y":["reclamacoes"]}
+```
+
+Ao longo do período também houve variação mensal.
+
+```visualization
+{"version":1,"type":"line","title":"Reclamações por mês","data":{"columns":["mes","reclamacoes"],"rows":[{"mes":"2025-01","reclamacoes":10},{"mes":"2025-02","reclamacoes":14}]},"x":"mes","y":["reclamacoes"]}
+```
+
+Telefone lidera o recorte por canal."""
+
+
+class RecordingObserver:
+    async def emit(self, event) -> None:
+        return None
 
 
 class FakeLLM:
-    def __init__(self, responses: list[LLMResponse]) -> None:
-        self._responses = iter(responses)
-
     async def invoke(
         self,
         messages: Sequence[LLMMessage],
         *,
         tools: Sequence[LLMToolDefinition] = (),
     ) -> LLMResponse:
-        return next(self._responses)
+        return LLMResponse(content="Rascunho baseado nas evidências.")
 
     async def stream(self, messages: Sequence[LLMMessage]) -> AsyncIterator[LLMChunk]:
-        if False:
-            yield LLMChunk(content="")
+        midpoint = len(RICH_ANSWER) // 2
+        yield LLMChunk(content=RICH_ANSWER[:midpoint])
+        yield LLMChunk(content=RICH_ANSWER[midpoint:])
 
 
 class FakeContextManager:
+    def __init__(self) -> None:
+        self.finalized_answer: str | None = None
+
     def tool_definitions(self, tools: ToolRegistry) -> tuple[LLMToolDefinition, ...]:
-        return tuple(
-            LLMToolDefinition(
-                name=tool.name,
-                description=tool.description,
-                input_schema=tool.input_schema,
-            )
-            for tool in tools.all()
-        )
+        return ()
 
     async def load_context(self, *, session_id, execution_id, question, tools):
         return SimpleNamespace(
             history=(),
             snapshot=None,
             skills=(),
-            tools=tuple(SimpleNamespace(name=tool.name) for tool in tools.all()),
+            tools=(),
             question=question,
         )
 
@@ -86,16 +89,17 @@ class FakeContextManager:
             snapshot=None,
         )
 
-    def is_skill_request(self, call: LLMToolCall) -> bool:
+    def is_skill_request(self, call) -> bool:
         return False
 
-    def is_global_context_search(self, call: LLMToolCall) -> bool:
+    def is_global_context_search(self, call) -> bool:
         return False
 
     async def record_tool_observation(self, **kwargs) -> None:
         return None
 
     async def finalize_execution(self, **kwargs):
+        self.finalized_answer = kwargs["answer"]
         return SimpleNamespace(
             sequence=1,
             reason=SimpleNamespace(value="execution_completed"),
@@ -104,49 +108,19 @@ class FakeContextManager:
 
 
 @pytest.mark.asyncio
-async def test_agent_persists_presentation_artifact_in_result() -> None:
-    presentation_arguments = {
-        "data": {
-            "columns": ["canal", "reclamacoes"],
-            "rows": [
-                {"canal": "Telefone", "reclamacoes": 19},
-                {"canal": "Chat", "reclamacoes": 18},
-                {"canal": "E-mail", "reclamacoes": 14},
-            ],
-        },
-        "visualization": {
-            "type": "bar",
-            "title": "Reclamações não resolvidas por canal",
-            "x": "canal",
-            "y": ["reclamacoes"],
-        },
-    }
-    llm = FakeLLM(
-        [
-            LLMResponse(
-                tool_calls=(
-                    LLMToolCall(
-                        id="present-1",
-                        name="present_result",
-                        arguments=presentation_arguments,
-                    ),
-                )
-            ),
-            LLMResponse(content="Telefone possui o maior número de reclamações não resolvidas."),
-        ]
-    )
-    observer = RecordingObserver()
+async def test_agent_can_stream_multiple_inline_visualizations_in_one_answer() -> None:
+    context_manager = FakeContextManager()
     program = LangGraphAgentProgram(
-        llm=llm,
-        tools=ToolRegistry([PresentationTool()]),
-        context_manager=FakeContextManager(),
+        llm=FakeLLM(),
+        tools=ToolRegistry([]),
+        context_manager=context_manager,
     )
 
     result = await program.execute(
         execution_id="execution-visualization",
         session_id="session-visualization",
-        question="Mostre as reclamações não resolvidas por canal.",
-        observer=observer,
+        question="Analise reclamações por canal e ao longo do tempo.",
+        observer=RecordingObserver(),
         policy=RuntimePolicy(
             max_iterations=4,
             max_sql_retries=2,
@@ -154,15 +128,13 @@ async def test_agent_persists_presentation_artifact_in_result() -> None:
         ),
     )
 
-    assert result.answer == "Telefone possui o maior número de reclamações não resolvidas."
-    assert result.result["presentation"]["visualization"]["type"] == "bar"
-    assert result.result["presentation"]["visualization"]["x"] == "canal"
-    assert result.result["presentation"]["data"]["rows"][0] == {
-        "canal": "Telefone",
-        "reclamacoes": 19,
+    assert result.answer == RICH_ANSWER
+    assert result.answer.count("```visualization") == 2
+    assert "presentation" not in result.result
+    assert result.result == {
+        "iterations": 1,
+        "tool_calls": 0,
+        "skill_uses": 0,
+        "stop_reason": "answer",
     }
-    assert any(
-        event.type == ExecutionEventType.VISUALIZATION_SELECTED
-        and event.payload["type"] == "bar"
-        for event in observer.events
-    )
+    assert context_manager.finalized_answer == RICH_ANSWER
