@@ -1,7 +1,7 @@
 import asyncio
 import signal
 
-from package.agent.composer.agent import compose_tools
+from package.agent.composer.agent import compose_skills, compose_tools
 from package.agent.composer.runtime import compose_agent_program
 from package.runner.composition.agent import AgentRuntimeFactory
 from package.runner.composition.database import compose_agent_database
@@ -33,8 +33,9 @@ async def run() -> None:
         progress_handler_steps=settings.user_database_progress_handler_steps,
     )
     tools = compose_tools(database_tool)
+    skills = compose_skills()
     llm = compose_llm(settings)
-    program = compose_agent_program(llm=llm, tools=tools)
+    program = compose_agent_program(llm=llm, tools=tools, skills=skills)
     runtime_factory = AgentRuntimeFactory(
         program=program,
         hot_state=hot_state,
@@ -42,6 +43,7 @@ async def run() -> None:
         session_factory=session_factory,
         max_iterations=settings.agent_runtime_max_iterations,
         max_sql_retries=settings.agent_runtime_max_sql_retries,
+        max_parallel_tool_calls_per_tool=settings.agent_tool_max_concurrency_per_tool,
     )
 
     shutdown = ShutdownSignal()
