@@ -51,6 +51,7 @@ class RunnerSettings(EnvSettings):
 
     agent_runtime_max_iterations: int
     agent_runtime_max_sql_retries: int
+    agent_tool_max_concurrency_per_tool: int
 
     runner_id: str
     outbox_poll_interval_seconds: float
