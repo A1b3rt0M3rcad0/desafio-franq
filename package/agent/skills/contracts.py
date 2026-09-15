@@ -1,9 +1,15 @@
-from typing import Any, Protocol
-
-from package.agent.context.models import AgentContext
+from typing import Protocol
 
 
 class Skill(Protocol):
-    name: str
+    """Lazy contextual capability.
 
-    async def execute(self, context: AgentContext, **kwargs: Any) -> Any: ...
+    Only ``name`` and ``description`` belong to the Agent's base context. The full
+    skill instructions are loaded on demand and must not be persisted in the
+    conversation state after the reasoning step that requested them.
+    """
+
+    name: str
+    description: str
+
+    async def load(self) -> str: ...
