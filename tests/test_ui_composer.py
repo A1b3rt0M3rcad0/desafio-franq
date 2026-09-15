@@ -1,4 +1,4 @@
-from package.ui.composer import ComposerMode, action_label, composer_mode
+from package.ui.components.composer import ComposerMode, action_label, composer_mode
 
 
 def test_composer_uses_send_action_without_active_execution() -> None:
