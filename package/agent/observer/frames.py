@@ -7,8 +7,12 @@ from pydantic import BaseModel, Field
 EXECUTION_STATE_FRAME = "execution.state"
 REALTIME_UNAVAILABLE_FRAME = "execution.realtime_unavailable"
 HEARTBEAT_FRAME = "heartbeat"
-TERMINAL_EXECUTION_STATUSES = {"completed", "failed"}
-TERMINAL_EVENT_TYPES = {"execution.completed", "execution.failed"}
+TERMINAL_EXECUTION_STATUSES = {"completed", "failed", "cancelled"}
+TERMINAL_EVENT_TYPES = {
+    "execution.completed",
+    "execution.failed",
+    "execution.cancelled",
+}
 
 
 class ExecutionFrame(BaseModel):
