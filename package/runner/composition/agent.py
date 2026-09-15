@@ -19,6 +19,7 @@ class AgentRuntimeFactory:
     session_factory: async_sessionmaker[AsyncSession]
     max_iterations: int
     max_sql_retries: int
+    max_parallel_tool_calls_per_tool: int
 
     def create(self) -> AgentRuntime:
         observer = RedisExecutionObserver(
@@ -29,6 +30,7 @@ class AgentRuntimeFactory:
         policy = create_runtime_policy(
             max_iterations=self.max_iterations,
             max_sql_retries=self.max_sql_retries,
+            max_parallel_tool_calls_per_tool=self.max_parallel_tool_calls_per_tool,
         )
         return AgentRuntime(
             program=self.program,
