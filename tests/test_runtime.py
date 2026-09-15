@@ -7,7 +7,7 @@ from package.agent.runtime.execution import AgentRuntime
 from package.agent.runtime.loop import RuntimePolicy
 
 
-class RecordingObserver:
+class RecordingEventSink:
     def __init__(self) -> None:
         self.events: list[ExecutionEvent] = []
 
@@ -37,11 +37,11 @@ class Program:
 
 
 @pytest.mark.asyncio
-async def test_runtime_emits_lifecycle_events() -> None:
-    observer = RecordingObserver()
+async def test_runtime_only_emits_program_events() -> None:
+    event_sink = RecordingEventSink()
     runtime = AgentRuntime(
         program=Program(),
-        observer=observer,
+        event_sink=event_sink,
         policy=RuntimePolicy(
             max_iterations=8,
             max_sql_retries=3,
@@ -56,8 +56,4 @@ async def test_runtime_emits_lifecycle_events() -> None:
     )
 
     assert result.answer == "ok"
-    assert [event.type for event in observer.events] == [
-        ExecutionEventType.EXECUTION_STARTED,
-        ExecutionEventType.PLAN_CREATED,
-        ExecutionEventType.EXECUTION_COMPLETED,
-    ]
+    assert [event.type for event in event_sink.events] == [ExecutionEventType.PLAN_CREATED]
