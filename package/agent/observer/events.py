@@ -5,14 +5,34 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class ExecutionPhase(StrEnum):
+    PENDING = "pending"
+    CONTEXT = "context"
+    REASONING = "reasoning"
+    SKILL = "skill"
+    TOOL = "tool"
+    RESPONSE_PREPARING = "response_preparing"
+    RESPONSE_STREAMING = "response_streaming"
+    FINALIZING = "finalizing"
+    CANCEL_REQUESTED = "cancel_requested"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 class ExecutionEventType(StrEnum):
     EXECUTION_STARTED = "execution.started"
+    EXECUTION_PHASE_CHANGED = "execution.phase.changed"
+    EXECUTION_CANCEL_REQUESTED = "execution.cancel_requested"
+    EXECUTION_CANCELLED = "execution.cancelled"
     EXECUTION_COMPLETED = "execution.completed"
     EXECUTION_FAILED = "execution.failed"
     AGENT_ITERATION_STARTED = "agent.iteration.started"
     AGENT_DECISION = "agent.decision"
     AGENT_MAX_ITERATIONS_REACHED = "agent.max_iterations_reached"
+    ANSWER_STARTED = "answer.started"
     ANSWER_GENERATED = "answer.generated"
+    ANSWER_COMPLETED = "answer.completed"
     CONTEXT_LOADED = "context.loaded"
     CONTEXT_BUDGET_EXCEEDED = "context.budget.exceeded"
     CONTEXT_SNAPSHOT_CREATED = "context.snapshot.created"
@@ -35,12 +55,17 @@ class ExecutionEventType(StrEnum):
 
 TRACEABLE_EVENT_TYPES = {
     ExecutionEventType.EXECUTION_STARTED,
+    ExecutionEventType.EXECUTION_PHASE_CHANGED,
+    ExecutionEventType.EXECUTION_CANCEL_REQUESTED,
+    ExecutionEventType.EXECUTION_CANCELLED,
     ExecutionEventType.EXECUTION_COMPLETED,
     ExecutionEventType.EXECUTION_FAILED,
     ExecutionEventType.AGENT_ITERATION_STARTED,
     ExecutionEventType.AGENT_DECISION,
     ExecutionEventType.AGENT_MAX_ITERATIONS_REACHED,
+    ExecutionEventType.ANSWER_STARTED,
     ExecutionEventType.ANSWER_GENERATED,
+    ExecutionEventType.ANSWER_COMPLETED,
     ExecutionEventType.CONTEXT_LOADED,
     ExecutionEventType.CONTEXT_BUDGET_EXCEEDED,
     ExecutionEventType.CONTEXT_SNAPSHOT_CREATED,
