@@ -1,12 +1,20 @@
-from html import escape
+import streamlit as st
 
-import streamlit.components.v1 as components
-
-from package.ui.components.assets import load_asset, render_asset
+from package.ui.components.assets import load_asset
 
 
 DEFAULT_CONVERSATION_PAGE_SIZE = 20
 MAX_CONVERSATION_PANEL_HEIGHT = 560
+MIN_CONVERSATION_PANEL_HEIGHT = 120
+
+
+_CONVERSATION_SIDEBAR = st.components.v2.component(
+    name="franq_conversation_sidebar",
+    html=load_asset("conversation_sidebar.html"),
+    css=load_asset("conversation_sidebar.css"),
+    js=load_asset("conversation_sidebar.js"),
+    isolate_styles=True,
+)
 
 
 def render_conversation_sidebar(
@@ -16,43 +24,31 @@ def render_conversation_sidebar(
     current_limit: int,
     has_more: bool,
 ) -> None:
-    items: list[str] = []
+    visible_sessions: list[dict[str, str]] = []
     for session in sessions:
         session_id = str(session.get("id") or "")
         if not session_id:
             continue
-        title = str(session.get("title") or "Conversa")
-        items.append(
-            render_asset(
-                "conversation_item.html",
-                {
-                    "ACTIVE_CLASS": " is-active" if session_id == active_session_id else "",
-                    "SESSION_ID": escape(session_id, quote=True),
-                    "TITLE_ATTR": escape(title, quote=True),
-                    "TITLE": escape(title),
-                },
-            )
+        visible_sessions.append(
+            {
+                "id": session_id,
+                "title": str(session.get("title") or "Conversa"),
+            }
         )
 
-    javascript = render_asset(
-        "conversation_sidebar.js",
-        {
-            "CURRENT_LIMIT": str(max(current_limit, DEFAULT_CONVERSATION_PAGE_SIZE)),
-            "PAGE_SIZE": str(DEFAULT_CONVERSATION_PAGE_SIZE),
-            "HAS_MORE": "true" if has_more else "false",
-        },
+    content_height = max(
+        MIN_CONVERSATION_PANEL_HEIGHT,
+        min(MAX_CONVERSATION_PANEL_HEIGHT, len(visible_sessions) * 38 + 8),
     )
-    html = render_asset(
-        "conversation_sidebar.html",
-        {
-            "STYLE": load_asset("conversation_sidebar.css"),
-            "ITEMS": "".join(items),
-            "SCRIPT": javascript,
+    _CONVERSATION_SIDEBAR(
+        data={
+            "sessions": visible_sessions,
+            "active_session_id": active_session_id,
+            "current_limit": max(current_limit, DEFAULT_CONVERSATION_PAGE_SIZE),
+            "page_size": DEFAULT_CONVERSATION_PAGE_SIZE,
+            "has_more": has_more,
         },
-    )
-    content_height = max(56, len(items) * 38 + 8)
-    components.html(
-        html,
-        height=min(MAX_CONVERSATION_PANEL_HEIGHT, content_height),
-        scrolling=False,
+        key="franq_conversation_sidebar",
+        width="stretch",
+        height=content_height,
     )
