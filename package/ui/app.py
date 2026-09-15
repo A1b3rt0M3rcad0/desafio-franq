@@ -249,6 +249,7 @@ def _refresh_durable_result(
 
 def _observe_execution(client: FranqApiClient, execution_id: str) -> bool:
     answer = ""
+    displayed_answer = ""
     result: dict[str, Any] | None = None
     terminal_status: str | None = None
     error: str | None = None
@@ -257,7 +258,7 @@ def _observe_execution(client: FranqApiClient, execution_id: str) -> bool:
         status_view = st.status("Aguardando o agente...", expanded=False)
 
         def answer_stream() -> Iterator[str]:
-            nonlocal answer, result, terminal_status, error
+            nonlocal answer, displayed_answer, result, terminal_status, error
             for frame in client.observe_execution(
                 execution_id,
                 last_sequence=st.session_state.get("last_sequence"),
@@ -275,10 +276,12 @@ def _observe_execution(client: FranqApiClient, execution_id: str) -> bool:
                         candidate = str(state_answer)
                         if not answer:
                             answer = candidate
+                            displayed_answer += candidate
                             yield candidate
                         elif candidate.startswith(answer) and len(candidate) > len(answer):
                             suffix = candidate[len(answer) :]
                             answer = candidate
+                            displayed_answer += suffix
                             yield suffix
                     if isinstance(frame.payload.get("result"), dict):
                         result = frame.payload["result"]
@@ -290,16 +293,19 @@ def _observe_execution(client: FranqApiClient, execution_id: str) -> bool:
                     content = str(frame.payload.get("content") or "")
                     if content:
                         answer += content
+                        displayed_answer += content
                         yield content
                 elif frame.type == "execution.completed":
                     terminal_status = "completed"
                     final_answer = str(frame.payload.get("answer") or answer)
                     if final_answer and not answer:
                         answer = final_answer
+                        displayed_answer += final_answer
                         yield final_answer
                     elif final_answer.startswith(answer) and len(final_answer) > len(answer):
                         suffix = final_answer[len(answer) :]
                         answer = final_answer
+                        displayed_answer += suffix
                         yield suffix
                     else:
                         answer = final_answer or answer
@@ -312,9 +318,7 @@ def _observe_execution(client: FranqApiClient, execution_id: str) -> bool:
                     status_view.update(label="Recuperando estado durável...")
 
         try:
-            streamed_answer = st.write_stream(answer_stream())
-            if isinstance(streamed_answer, str) and streamed_answer and not answer:
-                answer = streamed_answer
+            st.write_stream(answer_stream())
         except (httpx.HTTPError, ValueError) as exc:
             status_view.update(label="Recuperando estado da execução...")
             terminal_status, answer, result, durable_error = _refresh_durable_result(
@@ -349,7 +353,7 @@ def _observe_execution(client: FranqApiClient, execution_id: str) -> bool:
 
         if terminal_status == "completed":
             final_answer = answer or "Execução concluída sem conteúdo textual."
-            if not answer:
+            if not displayed_answer:
                 st.markdown(final_answer)
             render_result(result)
             status_view.update(label="Concluído", state="complete")
