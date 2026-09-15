@@ -6,8 +6,8 @@ def test_conversation_sidebar_supports_right_click_delete_and_inline_rename() ->
     css = load_asset("conversation_sidebar.css")
     html = load_asset("conversation_sidebar.html")
 
-    assert 'addEventListener("contextmenu"' in javascript
-    assert 'addEventListener("dblclick"' in javascript
+    assert "item.oncontextmenu" in javascript
+    assert "item.ondblclick" in javascript
     assert "delete_session_id" in javascript
     assert "rename_session_id" in javascript
     assert "conversation-title-editor" in javascript
@@ -19,11 +19,21 @@ def test_conversation_sidebar_supports_right_click_delete_and_inline_rename() ->
     assert ".conversation-title-editor" in css
 
 
+def test_conversation_sidebar_uses_component_data_and_top_level_navigation() -> None:
+    javascript = load_asset("conversation_sidebar.js")
+
+    assert "data?.sessions" in javascript
+    assert "parentElement.querySelector" in javascript
+    assert "window.location.href" in javascript
+    assert "window.parent.location" not in javascript
+    assert "list.replaceChildren()" in javascript
+
+
 def test_conversation_sidebar_loads_more_when_vertical_scroll_reaches_end() -> None:
     javascript = load_asset("conversation_sidebar.js")
     css = load_asset("conversation_sidebar.css")
 
-    assert 'list.addEventListener("scroll"' in javascript
+    assert "list.onscroll" in javascript
     assert "sessions_limit" in javascript
     assert "overflow-y: auto" in css
     assert "overflow-x: hidden" in css
@@ -36,13 +46,12 @@ def test_conversation_titles_stay_on_one_line_with_ellipsis() -> None:
     assert "text-overflow: ellipsis" in css
 
 
-def test_conversation_sidebar_syncs_parent_theme_and_highlights_active_session() -> None:
-    javascript = load_asset("conversation_sidebar.js")
+def test_conversation_sidebar_uses_streamlit_theme_and_highlights_active_session() -> None:
     css = load_asset("conversation_sidebar.css")
 
-    assert "syncTheme" in javascript
-    assert '[data-testid="stSidebar"]' in javascript
-    assert "--franq-text-color" in javascript
+    assert "var(--st-text-color)" in css
+    assert "var(--st-primary-color)" in css
+    assert "var(--st-secondary-background-color)" in css
     assert ".conversation-item.is-active" in css
-    assert "box-shadow: inset 3px 0 0 var(--franq-accent)" in css
-    assert "color: var(--franq-text-color)" in css
+    assert "box-shadow: inset 3px 0 0 var(--st-primary-color)" in css
+    assert "font-weight: 600" in css
