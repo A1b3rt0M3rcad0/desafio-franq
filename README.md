@@ -51,7 +51,9 @@ O Agent depende apenas de `LLMClient`. Os providers concretos usam LangChain:
 
 O provider ativo é escolhido por `LLM_PROVIDER=openai` ou `LLM_PROVIDER=deepseek`. A janela de contexto e a contagem de tokens vêm do modelo ativo; não são valores mockados no runtime.
 
-A API não bloqueia a criação de uma Execution com base na disponibilidade do Runner ou do provider. A etapa de Acceptance é responsável apenas por persistir `Execution(PENDING) + Outbox` atomicamente e retornar `202 Accepted`. Disponibilidade/configuração do LLM pertence ao Runner. Se o Runner estiver degradado ou o provider rejeitar a chamada, a Execution é marcada como `failed` e essa falha chega ao cliente pelo fluxo normal do Observer, sem deixar a conversa presa em `pending` e sem reexecutar indefinidamente a mesma tarefa.
+A API não bloqueia a criação de uma Execution com base na disponibilidade do Runner ou do provider. A etapa de Acceptance é responsável apenas por persistir `Execution(PENDING) + Outbox` atomicamente e retornar `202 Accepted`.
+
+Disponibilidade/configuração do LLM pertence ao Runner. O Runner publica seu estado de readiness no Redis apenas para observabilidade operacional; essa readiness não participa da admissão da requisição. Se o Runner estiver degradado por configuração inválida, ele continua consumindo o Outbox com um runtime indisponível e transforma a Execution em `failed`. Se o provider rejeitar uma chamada depois que o runtime foi composto, a falha também é terminal para aquela Execution. Em ambos os casos o erro chega ao cliente pelo fluxo normal `Execution -> Observer -> SSE`, sem deixar a conversa presa em `pending` e sem reexecutar indefinidamente a mesma tarefa.
 
 ## Runtime do Agent
 
