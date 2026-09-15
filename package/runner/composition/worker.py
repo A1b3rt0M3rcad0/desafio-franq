@@ -28,9 +28,11 @@ def compose_worker(
         max_delay_seconds=retry_max_delay_seconds,
         exponent_cap=retry_exponent_cap,
     )
+    lifecycle_sink = runtime_factory.create_event_sink()
     consumer = ExecutionConsumer(
         session_factory=session_factory,
         runtime_factory=runtime_factory,
+        event_sink=lifecycle_sink,
         runner_id=runner_id,
         batch_size=batch_size,
         max_attempts=max_attempts,
