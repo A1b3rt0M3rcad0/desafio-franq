@@ -56,6 +56,24 @@ body {
   line-height: 1.2;
 }
 
+.conversation-title-editor {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  border: 1px solid rgba(128, 128, 128, 0.45);
+  border-radius: 6px;
+  padding: 2px 6px;
+  background: rgba(128, 128, 128, 0.10);
+  color: inherit;
+  outline: none;
+  font: inherit;
+  font-size: 14px;
+}
+
+.conversation-title-editor:focus {
+  border-color: rgba(128, 128, 128, 0.75);
+}
+
 .conversation-context-menu {
   position: fixed;
   z-index: 9999;
