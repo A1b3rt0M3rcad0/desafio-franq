@@ -1,0 +1,1 @@
+ANALYST_PROMPT = """Summarize the query result precisely. State relevant units and filters. Choose a table for lists, bars for categorical comparisons, and lines for time trends when a visualization is useful."""
