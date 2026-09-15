@@ -51,18 +51,13 @@ jobs:
         run: docker compose run --rm migrations
 
       - name: Check migration/model drift
-        run: |
-          set -a
-          source .env
-          set +a
-          python -m alembic check
+        run: python -m alembic check
 
       - name: Run tests
-        run: |
-          set -a
-          source .env
-          set +a
-          RUN_POSTGRES_INTEGRATION_TESTS=1 python -m pytest -q
+        env:
+          AGENT_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/desafio_franq
+          RUN_POSTGRES_INTEGRATION_TESTS: "1"
+        run: python -m pytest -q
 
       - name: Stop services
         if: always()
