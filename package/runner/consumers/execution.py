@@ -1,6 +1,8 @@
 import asyncio
+import logging
 from contextlib import suppress
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from package.agent.database.models.execution import ExecutionStatus
@@ -11,6 +13,9 @@ from package.agent.llm.errors import LLMProviderError
 from package.runner.contracts import RuntimeFactory
 from package.runner.runtime.health import RunnerHealthReporter
 from package.runner.runtime.retry import OutboxRetryPolicy
+
+
+logger = logging.getLogger(__name__)
 
 
 class ExecutionConsumer:
@@ -132,6 +137,7 @@ class ExecutionConsumer:
             )
             return
         except Exception as exc:
+            logger.exception("Execution %s failed in the runner", execution_id)
             if await self._is_cancel_requested(execution_id):
                 await self._mark_cancelled(
                     execution_id=execution_id,
@@ -144,10 +150,12 @@ class ExecutionConsumer:
                     model=exc.model,
                     error=str(exc),
                 )
+            internal_error = str(exc) or exc.__class__.__name__
             await self._mark_terminal_failure(
                 execution_id=execution_id,
                 message_id=message.id,
-                error=str(exc) or exc.__class__.__name__,
+                error=_public_execution_error(exc),
+                internal_error=internal_error,
             )
             return
 
@@ -218,6 +226,7 @@ class ExecutionConsumer:
         execution_id: str,
         message_id: str,
         error: str,
+        internal_error: str | None = None,
     ) -> None:
         """A runtime failure is terminal for this Execution and must not loop."""
         async with self._session_factory() as db:
@@ -229,7 +238,7 @@ class ExecutionConsumer:
             if persisted_message is not None:
                 await OutboxRepository(db).mark_failed(
                     persisted_message,
-                    error=error,
+                    error=internal_error or error,
                 )
             await db.commit()
 
@@ -239,3 +248,9 @@ class ExecutionConsumer:
             if message is not None:
                 await OutboxRepository(db).mark_processed(message)
                 await db.commit()
+
+
+def _public_execution_error(exc: Exception) -> str:
+    if isinstance(exc, SQLAlchemyError):
+        return "Falha interna de persistência durante a execução."
+    return str(exc) or exc.__class__.__name__
