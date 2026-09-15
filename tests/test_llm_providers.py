@@ -35,7 +35,7 @@ def _deepseek_config() -> DeepSeekConfig:
 
 
 @pytest.mark.asyncio
-async def test_openai_streams_through_langgraph() -> None:
+async def test_openai_streams_through_langchain_adapter() -> None:
     model = GenericFakeChatModel(messages=iter(["Olá mundo"]))
     llm = OpenAILLM(_openai_config(), model=model)
 
@@ -50,7 +50,7 @@ async def test_openai_streams_through_langgraph() -> None:
 
 
 @pytest.mark.asyncio
-async def test_deepseek_streams_through_langgraph() -> None:
+async def test_deepseek_streams_through_langchain_adapter() -> None:
     model = GenericFakeChatModel(messages=iter(["Olá DeepSeek"]))
     llm = DeepSeekLLM(_deepseek_config(), model=model)
 
