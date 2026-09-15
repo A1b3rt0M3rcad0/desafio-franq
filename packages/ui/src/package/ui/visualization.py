@@ -9,17 +9,22 @@ class PreparedVisualization:
     rows: tuple[dict[str, Any], ...]
     x: str | None = None
     y: tuple[str, ...] = ()
+    hue: str | None = None
+    x_label: str | None = None
+    y_label: str | None = None
+    orientation: str = "vertical"
 
 
 def prepare_visualization(result: dict[str, Any] | None) -> PreparedVisualization | None:
     if not result:
         return None
 
-    rows = tuple(extract_rows(result))
+    payload = _presentation_payload(result)
+    rows = tuple(extract_rows(payload))
     if not rows:
         return None
 
-    raw = result.get("visualization")
+    raw = payload.get("visualization")
     if not isinstance(raw, dict):
         return PreparedVisualization(type="table", title=None, rows=rows)
 
@@ -29,14 +34,22 @@ def prepare_visualization(result: dict[str, Any] | None) -> PreparedVisualizatio
     if visualization_type not in {"table", "bar", "line", "scatter"}:
         visualization_type = "table"
 
-    title = str(raw["title"]).strip() if raw.get("title") else None
-    if visualization_type == "table":
-        return PreparedVisualization(type="table", title=title, rows=rows)
+    title = _optional_text(raw.get("title"))
+    x_label = _optional_text(raw.get("x_label"))
+    y_label = _optional_text(raw.get("y_label"))
 
-    x = raw.get("x")
-    if not isinstance(x, str) or not x.strip():
+    if visualization_type == "table":
+        return PreparedVisualization(
+            type="table",
+            title=title,
+            rows=rows,
+            x_label=x_label,
+            y_label=y_label,
+        )
+
+    x = _optional_text(raw.get("x"))
+    if x is None:
         return PreparedVisualization(type="table", title=title, rows=rows)
-    x = x.strip()
 
     raw_y = raw.get("y")
     if isinstance(raw_y, str):
@@ -46,12 +59,30 @@ def prepare_visualization(result: dict[str, Any] | None) -> PreparedVisualizatio
     else:
         y = ()
 
-    columns = set(rows[0])
-    if x not in columns or not y or any(column not in columns for column in y):
+    hue = _optional_text(raw.get("hue"))
+    orientation = str(raw.get("orientation") or "vertical").strip().lower()
+    if orientation not in {"vertical", "horizontal"}:
+        orientation = "vertical"
+    if visualization_type != "bar":
+        orientation = "vertical"
+
+    required_columns = {x, *y}
+    if hue is not None:
+        required_columns.add(hue)
+    if not y or any(any(column not in row for column in required_columns) for row in rows):
         return PreparedVisualization(type="table", title=title, rows=rows)
 
-    if visualization_type == "scatter" and len(y) > 1:
-        y = (y[0],)
+    if visualization_type == "scatter" and len(y) != 1:
+        return PreparedVisualization(type="table", title=title, rows=rows)
+    if hue is not None and len(y) > 1:
+        return PreparedVisualization(type="table", title=title, rows=rows)
+
+    if not all(_numeric_or_none(row[column]) for row in rows for column in y):
+        return PreparedVisualization(type="table", title=title, rows=rows)
+    if visualization_type == "scatter" and not all(
+        _numeric_or_none(row[x]) for row in rows
+    ):
+        return PreparedVisualization(type="table", title=title, rows=rows)
 
     return PreparedVisualization(
         type=visualization_type,
@@ -59,16 +90,28 @@ def prepare_visualization(result: dict[str, Any] | None) -> PreparedVisualizatio
         rows=rows,
         x=x,
         y=y,
+        hue=hue,
+        x_label=x_label,
+        y_label=y_label,
+        orientation=orientation,
     )
 
 
 def extract_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
-    candidates = [result.get("data"), result]
+    payload = _presentation_payload(result)
+    candidates = [payload.get("data"), payload]
     for candidate in candidates:
         rows = _rows_from_candidate(candidate)
         if rows:
             return rows
     return []
+
+
+def _presentation_payload(result: dict[str, Any]) -> dict[str, Any]:
+    presentation = result.get("presentation")
+    if isinstance(presentation, dict):
+        return presentation
+    return result
 
 
 def _rows_from_candidate(candidate: Any) -> list[dict[str, Any]]:
@@ -101,3 +144,16 @@ def _normalize_mapping_rows(rows: list[Any]) -> list[dict[str, Any]]:
     if not rows or not all(isinstance(row, dict) for row in rows):
         return []
     return [dict(row) for row in rows]
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def _numeric_or_none(value: Any) -> bool:
+    return value is None or (
+        not isinstance(value, bool) and isinstance(value, (int, float))
+    )
