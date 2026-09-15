@@ -16,15 +16,14 @@ from package.agent.llm.models import (
     LLMToolDefinition,
 )
 from package.agent.llm.providers._messages import to_langchain_messages
-from package.agent.llm.realtime import current_text_delta_handler
 
 
 class LangChainLLMClient(LLMClient):
     """Base adapter for LangChain chat models.
 
-    Provider/model metadata and token accounting are obtained from the concrete
-    LangChain model. Agent orchestration belongs to the LangGraph-backed
-    AgentProgram above this contract.
+    Reasoning/tool-selection calls use ``invoke`` and are never exposed as text
+    deltas. ``stream`` is reserved for the explicit final-answer phase, so every
+    public assistant delta is guaranteed to belong to the user-visible answer.
     """
 
     def __init__(
@@ -100,21 +99,12 @@ class LangChainLLMClient(LLMClient):
         tools: Sequence[LLMToolDefinition] = (),
     ) -> LLMResponse:
         normalized_messages = self._normalize_messages(messages)
-        langchain_messages = to_langchain_messages(normalized_messages)
         model = self._model
         if tools:
             model = model.bind_tools([_to_langchain_tool(tool) for tool in tools])
 
-        delta_handler = current_text_delta_handler() if tools else None
         try:
-            if delta_handler is not None:
-                response = await self._streaming_invoke(
-                    model,
-                    langchain_messages,
-                    delta_handler=delta_handler,
-                )
-            else:
-                response = await model.ainvoke(langchain_messages)
+            response = await model.ainvoke(to_langchain_messages(normalized_messages))
         except LLMProviderError:
             raise
         except Exception as exc:
@@ -129,34 +119,12 @@ class LangChainLLMClient(LLMClient):
             tool_calls=tool_calls,
         )
 
-    async def _streaming_invoke(
-        self,
-        model: Any,
-        langchain_messages: Sequence[Any],
-        *,
-        delta_handler,
-    ) -> Any:
-        accumulated = None
-        async for message_chunk in model.astream(langchain_messages):
-            text = _extract_text(getattr(message_chunk, "content", ""))
-            if text:
-                await delta_handler(text)
-            accumulated = (
-                message_chunk
-                if accumulated is None
-                else accumulated + message_chunk
-            )
-
-        if accumulated is None:
-            raise RuntimeError("LLM stream completed without producing a response")
-        return accumulated
-
     async def stream(self, messages: Sequence[LLMMessage]) -> AsyncIterator[LLMChunk]:
         normalized_messages = self._normalize_messages(messages)
         langchain_messages = to_langchain_messages(normalized_messages)
         try:
             async for message_chunk in self._model.astream(langchain_messages):
-                text = _extract_text(message_chunk.content)
+                text = _extract_text(getattr(message_chunk, "content", ""))
                 if text:
                     yield LLMChunk(content=text)
         except LLMProviderError:
