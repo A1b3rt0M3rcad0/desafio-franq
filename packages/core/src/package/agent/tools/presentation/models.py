@@ -21,8 +21,13 @@ class PresentationData(BaseModel):
         if len(set(normalized_columns)) != len(normalized_columns):
             raise ValueError("Presentation columns must be unique")
 
+        column_pairs = list(zip(self.columns, normalized_columns, strict=True))
         for index, row in enumerate(self.rows):
-            missing = [column for column in normalized_columns if column not in row]
+            missing = [
+                normalized
+                for raw, normalized in column_pairs
+                if raw not in row and normalized not in row
+            ]
             if missing:
                 raise ValueError(
                     f"Presentation row {index} is missing declared columns: {missing}"
@@ -30,11 +35,17 @@ class PresentationData(BaseModel):
         return self
 
     def normalized_rows(self) -> list[dict[str, Any]]:
-        columns = [column.strip() for column in self.columns]
-        return [
-            {column: row[column] for column in columns}
-            for row in self.rows
-        ]
+        normalized_columns = [column.strip() for column in self.columns]
+        column_pairs = list(zip(self.columns, normalized_columns, strict=True))
+        normalized_rows: list[dict[str, Any]] = []
+        for row in self.rows:
+            normalized_rows.append(
+                {
+                    normalized: row[raw] if raw in row else row[normalized]
+                    for raw, normalized in column_pairs
+                }
+            )
+        return normalized_rows
 
 
 class VisualizationSpec(BaseModel):
