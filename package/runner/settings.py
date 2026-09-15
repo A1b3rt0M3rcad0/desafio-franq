@@ -6,9 +6,32 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from package.agent.llm.config import LLMProvider, ReasoningEffort
 
 
-class RunnerSettings(BaseSettings):
+class EnvSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+
+class OpenAIProviderSettings(EnvSettings):
+    openai_api_key: SecretStr
+    openai_base_url: str
+    openai_model: str
+    openai_timeout_seconds: float
+    openai_max_output_tokens: int
+    openai_max_retries: int
+    openai_reasoning_effort: ReasoningEffort
+    openai_store: bool
+
+
+class DeepSeekProviderSettings(EnvSettings):
+    deepseek_api_key: SecretStr
+    deepseek_base_url: str
+    deepseek_model: str
+    deepseek_timeout_seconds: float
+    deepseek_max_output_tokens: int
+    deepseek_max_retries: int
+    deepseek_reasoning_effort: ReasoningEffort
+
+
+class RunnerSettings(EnvSettings):
     agent_database_url: str
 
     redis_url: str
@@ -25,13 +48,6 @@ class RunnerSettings(BaseSettings):
     user_database_progress_handler_steps: int
 
     llm_provider: LLMProvider
-    openai_api_key: SecretStr
-    openai_base_url: str
-    openai_model: str
-    openai_timeout_seconds: float
-    openai_max_output_tokens: int
-    openai_reasoning_effort: ReasoningEffort
-    openai_store: bool
 
     agent_runtime_max_iterations: int
     agent_runtime_max_sql_retries: int
