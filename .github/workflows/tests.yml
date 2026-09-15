@@ -32,6 +32,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
+      - name: Install browser for UI tests
+        run: python -m playwright install --with-deps chromium
+
       - name: Prepare environment
         run: cp .env.example .env
 
@@ -57,6 +60,7 @@ jobs:
         env:
           AGENT_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/desafio_franq
           RUN_POSTGRES_INTEGRATION_TESTS: "1"
+          RUN_BROWSER_UI_TESTS: "1"
         run: python -m pytest -q
 
       - name: Stop services
