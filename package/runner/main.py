@@ -104,6 +104,7 @@ async def run() -> None:
         batch_size=settings.outbox_batch_size,
         max_attempts=settings.outbox_max_attempts,
         poll_interval_seconds=settings.outbox_poll_interval_seconds,
+        cancellation_poll_seconds=settings.runner_cancellation_poll_seconds,
         retry_base_delay_seconds=settings.outbox_retry_base_delay_seconds,
         retry_max_delay_seconds=settings.outbox_retry_max_delay_seconds,
         retry_exponent_cap=settings.outbox_retry_exponent_cap,
