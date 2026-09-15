@@ -1,7 +1,11 @@
 (() => {
   const list = document.getElementById("conversation-list");
   const menu = document.getElementById("conversation-context-menu");
+  const menuActions = document.getElementById("conversation-context-actions");
   const deleteAction = document.getElementById("conversation-delete-action");
+  const deleteConfirm = document.getElementById("conversation-delete-confirm");
+  const deleteCancel = document.getElementById("conversation-delete-cancel");
+  const deleteConfirmAction = document.getElementById("conversation-delete-confirm-action");
   const hasMore = __HAS_MORE__;
   const currentLimit = __CURRENT_LIMIT__;
   const pageSize = __PAGE_SIZE__;
@@ -9,6 +13,62 @@
   let menuSessionId = null;
   let loadingMore = false;
   let clickTimer = null;
+
+  const parseRgb = (value) => {
+    const match = String(value || "").match(/rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+    if (!match) {
+      return null;
+    }
+    return [Number(match[1]), Number(match[2]), Number(match[3])];
+  };
+
+  const isDark = (value) => {
+    const rgb = parseRgb(value);
+    if (!rgb) {
+      return true;
+    }
+    const [red, green, blue] = rgb.map((channel) => channel / 255);
+    const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+    return luminance < 0.5;
+  };
+
+  const syncTheme = () => {
+    try {
+      const parentDocument = window.parent.document;
+      const sidebar = parentDocument.querySelector('[data-testid="stSidebar"]');
+      const source = sidebar || parentDocument.body;
+      const sourceStyle = window.parent.getComputedStyle(source);
+      const rootStyle = window.parent.getComputedStyle(parentDocument.documentElement);
+      const dark = isDark(sourceStyle.backgroundColor);
+      const textColor = sourceStyle.color || (dark ? "#f5f5f5" : "#262730");
+      const primary = rootStyle.getPropertyValue("--primary-color").trim() || "#ff4b4b";
+
+      document.documentElement.style.setProperty("--franq-text-color", textColor);
+      document.documentElement.style.setProperty("--franq-accent", primary);
+      document.documentElement.style.setProperty(
+        "--franq-hover-bg",
+        dark ? "rgba(255, 255, 255, 0.07)" : "rgba(0, 0, 0, 0.055)"
+      );
+      document.documentElement.style.setProperty(
+        "--franq-active-bg",
+        dark ? "rgba(255, 255, 255, 0.13)" : "rgba(0, 0, 0, 0.09)"
+      );
+      document.documentElement.style.setProperty(
+        "--franq-active-border",
+        dark ? "rgba(255, 255, 255, 0.16)" : "rgba(0, 0, 0, 0.13)"
+      );
+      document.documentElement.style.setProperty(
+        "--franq-menu-bg",
+        sourceStyle.backgroundColor || (dark ? "#262730" : "#ffffff")
+      );
+      document.documentElement.style.setProperty(
+        "--franq-menu-border",
+        dark ? "rgba(255, 255, 255, 0.12)" : "rgba(0, 0, 0, 0.14)"
+      );
+    } catch (_) {
+      // Defaults in CSS keep the component readable if the parent theme cannot be inspected.
+    }
+  };
 
   const navigate = (changes) => {
     const url = new URL(window.parent.location.href);
@@ -47,9 +107,30 @@
     }
   };
 
+  const resetMenuView = () => {
+    menuActions.hidden = false;
+    deleteConfirm.hidden = true;
+    deleteConfirmAction.disabled = false;
+    deleteConfirmAction.textContent = "Excluir";
+  };
+
   const hideMenu = () => {
     menu.hidden = true;
     menuSessionId = null;
+    resetMenuView();
+  };
+
+  const openMenu = (item, event) => {
+    menuSessionId = item.dataset.sessionId;
+    resetMenuView();
+    menu.hidden = false;
+
+    const menuWidth = Math.max(menu.offsetWidth, 164);
+    const menuHeight = Math.max(menu.offsetHeight, 44);
+    const maxLeft = Math.max(4, window.innerWidth - menuWidth - 4);
+    const maxTop = Math.max(4, window.innerHeight - menuHeight - 4);
+    menu.style.left = `${Math.max(4, Math.min(event.clientX, maxLeft))}px`;
+    menu.style.top = `${Math.max(4, Math.min(event.clientY, maxTop))}px`;
   };
 
   const beginRename = (item) => {
@@ -137,27 +218,41 @@
         return;
       }
       event.preventDefault();
-      menuSessionId = item.dataset.sessionId;
-      menu.style.left = `${Math.min(event.clientX, window.innerWidth - 128)}px`;
-      menu.style.top = `${Math.min(event.clientY, window.innerHeight - 48)}px`;
-      menu.hidden = false;
+      event.stopPropagation();
+      openMenu(item, event);
     });
   });
 
-  deleteAction.addEventListener("click", () => {
+  deleteAction.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
     if (!menuSessionId) {
       return;
     }
-    const target = document.querySelector(
-      `.conversation-item[data-session-id="${CSS.escape(menuSessionId)}"]`
-    );
-    const title = target?.dataset.sessionTitle || "esta conversa";
-    if (!window.confirm(`Excluir “${title}”?`)) {
-      hideMenu();
+    menuActions.hidden = true;
+    deleteConfirm.hidden = false;
+  });
+
+  deleteCancel.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    hideMenu();
+  });
+
+  deleteConfirmAction.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!menuSessionId) {
       return;
     }
+    deleteConfirmAction.disabled = true;
+    deleteConfirmAction.textContent = "Excluindo...";
     rememberScroll();
-    navigate({ delete_session_id: menuSessionId });
+    navigate({
+      delete_session_id: menuSessionId,
+      rename_session_id: null,
+      rename_session_title: null,
+    });
   });
 
   document.addEventListener("click", (event) => {
@@ -181,5 +276,16 @@
         navigate({ sessions_limit: currentLimit + pageSize });
       }
     });
+  }
+
+  syncTheme();
+  try {
+    const parentRoot = window.parent.document.documentElement;
+    new MutationObserver(syncTheme).observe(parentRoot, {
+      attributes: true,
+      attributeFilter: ["class", "style"],
+    });
+  } catch (_) {
+    // Theme updates remain optional.
   }
 })();
