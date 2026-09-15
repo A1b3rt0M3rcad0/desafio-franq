@@ -16,6 +16,7 @@ def compose_worker(
     batch_size: int,
     max_attempts: int,
     poll_interval_seconds: float,
+    cancellation_poll_seconds: float,
     retry_base_delay_seconds: float,
     retry_max_delay_seconds: float,
     retry_exponent_cap: int,
@@ -33,6 +34,7 @@ def compose_worker(
         runner_id=runner_id,
         batch_size=batch_size,
         max_attempts=max_attempts,
+        cancellation_poll_seconds=cancellation_poll_seconds,
         retry_policy=retry_policy,
         health_reporter=health_reporter,
     )
