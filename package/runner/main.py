@@ -61,6 +61,7 @@ async def run() -> None:
         max_iterations=settings.agent_runtime_max_iterations,
         max_sql_retries=settings.agent_runtime_max_sql_retries,
         max_parallel_tool_calls_per_tool=settings.agent_tool_max_concurrency_per_tool,
+        projection_max_activities=settings.observer_projection_max_activities,
     )
 
     shutdown = ShutdownSignal()
