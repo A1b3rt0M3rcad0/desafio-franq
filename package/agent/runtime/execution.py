@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Any
 
-from package.agent.observer.contracts import ExecutionObserver
+from package.agent.observer.contracts import ExecutionEventSink
 from package.agent.observer.events import ExecutionEvent, ExecutionEventType
 from package.agent.runtime.contracts import AgentProgram
 from package.agent.runtime.loop import RuntimePolicy
@@ -18,7 +18,7 @@ class AgentRuntime:
         self,
         *,
         program: AgentProgram,
-        observer: ExecutionObserver,
+        observer: ExecutionEventSink,
         policy: RuntimePolicy,
     ) -> None:
         self._program = program
