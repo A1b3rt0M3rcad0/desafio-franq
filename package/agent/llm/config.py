@@ -3,8 +3,8 @@ from enum import StrEnum
 
 
 class LLMProvider(StrEnum):
-    OPENAI_RESPONSES = "openai_responses"
-    GPT_CHAT = "gpt_chat"
+    OPENAI = "openai"
+    DEEPSEEK = "deepseek"
 
 
 class ReasoningEffort(StrEnum):
@@ -23,5 +23,17 @@ class OpenAIConfig:
     model: str
     timeout_seconds: float
     max_output_tokens: int
+    max_retries: int
     reasoning_effort: ReasoningEffort
     store: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DeepSeekConfig:
+    api_key: str
+    base_url: str
+    model: str
+    timeout_seconds: float
+    max_output_tokens: int
+    max_retries: int
+    reasoning_effort: ReasoningEffort
