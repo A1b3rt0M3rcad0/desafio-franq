@@ -128,14 +128,16 @@ class ActivityPanel:
         mount_script_asset("activity_panel.js", _script_replacements(execution_id))
 
     def _render(self) -> None:
-        self._view.markdown(
+        # st.html owns one DOM subtree and avoids the Markdown block parser. Keeping
+        # every activity inside this single delta node is important while SSE events
+        # update the panel repeatedly during the same Streamlit script run.
+        self._view.html(
             render_activity_panel_html(
                 execution_id=self._execution_id,
                 label=self._label,
                 state=self._state,
                 activities=self._activities,
             ),
-            unsafe_allow_html=True,
         )
 
     def append(self, activity: ActivityPresentation) -> None:
