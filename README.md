@@ -205,6 +205,8 @@ O serviço `runner` é escalável. Cada container recebe o próprio hostname com
 docker compose up --build --scale runner=2
 ```
 
+A readiness dos Runners é publicada no Redis para diagnóstico e observabilidade operacional, não para impedir a etapa de Acceptance da API.
+
 O PostgreSQL utiliza volume nomeado para preservar Sessions, Executions, Outbox, traces e contexto entre reinicializações do stack. O Redis permanece responsável apenas pelo estado realtime/hot.
 
 Para encerrar:
