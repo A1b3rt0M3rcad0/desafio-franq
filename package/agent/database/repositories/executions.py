@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from package.agent.database.models.execution import AgentExecution, ExecutionStatus
@@ -22,6 +23,14 @@ class ExecutionRepository:
 
     async def get(self, execution_id: str) -> AgentExecution | None:
         return await self._session.get(AgentExecution, execution_id)
+
+    async def list_by_session(self, session_id: str) -> list[AgentExecution]:
+        result = await self._session.scalars(
+            select(AgentExecution)
+            .where(AgentExecution.session_id == session_id)
+            .order_by(AgentExecution.created_at.asc(), AgentExecution.id.asc())
+        )
+        return list(result.all())
 
     async def mark_running(self, execution: AgentExecution) -> None:
         execution.status = ExecutionStatus.RUNNING.value
