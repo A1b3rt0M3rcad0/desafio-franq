@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from package.agent.database.repositories.sessions import SessionRepository
@@ -18,6 +18,16 @@ async def create_session(
         entity = await SessionRepository(db).create(request.metadata)
         await db.commit()
         return present_session(entity)
+
+
+@router.get("", response_model=list[SessionResponse])
+async def list_sessions(
+    limit: int = Query(default=50, ge=1, le=200),
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
+) -> list[SessionResponse]:
+    async with session_factory() as db:
+        entities = await SessionRepository(db).list_recent(limit=limit)
+        return [present_session(entity) for entity in entities]
 
 
 @router.get("/{session_id}", response_model=SessionResponse)
