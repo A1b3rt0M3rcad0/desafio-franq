@@ -10,31 +10,20 @@
   let details = null;
   let summary = null;
   let scrollTarget = null;
-  let contentObserver = null;
-  let detailsObserver = null;
   let rootObserver = null;
+  let scrollObserver = null;
   let bindFrame = null;
-  let pinned = true;
-  let programmaticScroll = false;
-  let restoringOpen = false;
   let desiredOpen = false;
   let preferenceInitialized = false;
+  let restoringOpen = false;
+  let pinned = true;
+  let savedScrollTop = 0;
+  let programmaticScroll = false;
   const threshold = 32;
 
-  const findMarker = () => Array.from(
+  const findPanel = () => Array.from(
     doc.querySelectorAll('[data-franq-activity-panel]')
   ).find((element) => element.getAttribute('data-franq-activity-panel') === executionId);
-
-  const findVerticalScrollContainer = (marker) => {
-    const boundary = marker.closest('details');
-    let node = marker.parentElement;
-    while (node && node !== boundary) {
-      const style = host.getComputedStyle(node);
-      if (['auto', 'scroll', 'overlay'].includes(style.overflowY)) return node;
-      node = node.parentElement;
-    }
-    return null;
-  };
 
   const distanceFromBottom = () => {
     if (!scrollTarget) return 0;
@@ -45,16 +34,26 @@
     if (!scrollTarget) return;
     programmaticScroll = true;
     scrollTarget.scrollTop = scrollTarget.scrollHeight;
+    savedScrollTop = scrollTarget.scrollTop;
+    requestAnimationFrame(() => { programmaticScroll = false; });
+  };
+
+  const restoreScrollPosition = () => {
+    if (!scrollTarget) return;
+    programmaticScroll = true;
+    if (pinned) {
+      scrollTarget.scrollTop = scrollTarget.scrollHeight;
+      savedScrollTop = scrollTarget.scrollTop;
+    } else {
+      scrollTarget.scrollTop = Math.min(savedScrollTop, scrollTarget.scrollHeight);
+    }
     requestAnimationFrame(() => { programmaticScroll = false; });
   };
 
   const onScroll = () => {
     if (programmaticScroll || !scrollTarget) return;
+    savedScrollTop = scrollTarget.scrollTop;
     pinned = distanceFromBottom() <= threshold;
-  };
-
-  const onContentMutation = () => {
-    if (pinned && details && details.open) requestAnimationFrame(scrollToBottom);
   };
 
   const restoreDesiredOpenState = () => {
@@ -63,7 +62,7 @@
     details.open = desiredOpen;
     requestAnimationFrame(() => {
       restoringOpen = false;
-      if (desiredOpen && pinned) scrollToBottom();
+      if (desiredOpen) restoreScrollPosition();
     });
   };
 
@@ -80,11 +79,57 @@
       requestAnimationFrame(restoreDesiredOpenState);
       return;
     }
-    if (details.open && pinned) requestAnimationFrame(scrollToBottom);
+    if (details.open) requestAnimationFrame(restoreScrollPosition);
   };
 
-  const onDetailsMutation = () => {
-    if (details && details.open !== desiredOpen) requestAnimationFrame(restoreDesiredOpenState);
+  const unbind = () => {
+    if (summary) summary.removeEventListener('click', persistUserIntent, true);
+    if (details) details.removeEventListener('toggle', onToggle);
+    if (scrollTarget) scrollTarget.removeEventListener('scroll', onScroll);
+    if (scrollObserver) scrollObserver.disconnect();
+    summary = null;
+    details = null;
+    scrollTarget = null;
+    scrollObserver = null;
+  };
+
+  const bind = () => {
+    const nextDetails = findPanel();
+    if (!nextDetails) return;
+    const nextScrollTarget = nextDetails.querySelector('[data-franq-activity-scroll]');
+
+    if (nextDetails === details && nextScrollTarget === scrollTarget) {
+      restoreDesiredOpenState();
+      return;
+    }
+
+    unbind();
+    details = nextDetails;
+    summary = details.querySelector(':scope > summary') || details.querySelector('summary');
+    scrollTarget = nextScrollTarget;
+
+    if (!preferenceInitialized) {
+      const storedOpen = host.sessionStorage.getItem(storageKey);
+      desiredOpen = storedOpen === null ? details.open : storedOpen === '1';
+      preferenceInitialized = true;
+    }
+
+    if (summary) summary.addEventListener('click', persistUserIntent, true);
+    details.addEventListener('toggle', onToggle);
+    if (scrollTarget) {
+      scrollTarget.addEventListener('scroll', onScroll, { passive: true });
+      scrollObserver = new MutationObserver(() => {
+        if (details && details.open && pinned) requestAnimationFrame(scrollToBottom);
+      });
+      scrollObserver.observe(scrollTarget, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+    }
+
+    restoreDesiredOpenState();
+    if (details.open) requestAnimationFrame(restoreScrollPosition);
   };
 
   const scheduleBind = () => {
@@ -95,64 +140,6 @@
     });
   };
 
-  const unbindDetails = () => {
-    if (detailsObserver) detailsObserver.disconnect();
-    detailsObserver = null;
-    if (summary) summary.removeEventListener('click', persistUserIntent, true);
-    if (details) details.removeEventListener('toggle', onToggle);
-    summary = null;
-  };
-
-  const bindDetails = (nextDetails) => {
-    if (nextDetails === details) {
-      restoreDesiredOpenState();
-      return;
-    }
-    unbindDetails();
-    details = nextDetails;
-    if (!details) return;
-
-    if (!preferenceInitialized) {
-      const storedOpen = host.sessionStorage.getItem(storageKey);
-      desiredOpen = storedOpen === null ? details.open : storedOpen === '1';
-      preferenceInitialized = true;
-    }
-
-    summary = details.querySelector(':scope > summary') || details.querySelector('summary');
-    if (summary) summary.addEventListener('click', persistUserIntent, true);
-    details.addEventListener('toggle', onToggle);
-    detailsObserver = new MutationObserver(onDetailsMutation);
-    detailsObserver.observe(details, { attributes: true, attributeFilter: ['open'] });
-    restoreDesiredOpenState();
-  };
-
-  const bindScrollTarget = (nextScrollTarget) => {
-    if (nextScrollTarget === scrollTarget) return;
-    if (contentObserver) contentObserver.disconnect();
-    if (scrollTarget) {
-      scrollTarget.removeEventListener('scroll', onScroll);
-      scrollTarget.classList.remove('franq-activity-timeline');
-    }
-    scrollTarget = nextScrollTarget;
-    if (!scrollTarget) return;
-    scrollTarget.classList.add('franq-activity-timeline');
-    scrollTarget.addEventListener('scroll', onScroll, { passive: true });
-    contentObserver = new MutationObserver(onContentMutation);
-    contentObserver.observe(scrollTarget, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-    });
-    requestAnimationFrame(scrollToBottom);
-  };
-
-  function bind() {
-    const marker = findMarker();
-    if (!marker) return;
-    bindDetails(marker.closest('details'));
-    bindScrollTarget(findVerticalScrollContainer(marker));
-  }
-
   rootObserver = new MutationObserver(scheduleBind);
   rootObserver.observe(doc.body, { childList: true, subtree: true });
   bind();
@@ -160,15 +147,9 @@
   registry[executionId] = {
     cleanup: () => {
       if (rootObserver) rootObserver.disconnect();
-      if (contentObserver) contentObserver.disconnect();
-      if (detailsObserver) detailsObserver.disconnect();
+      if (scrollObserver) scrollObserver.disconnect();
       if (bindFrame !== null) cancelAnimationFrame(bindFrame);
-      if (summary) summary.removeEventListener('click', persistUserIntent, true);
-      if (details) details.removeEventListener('toggle', onToggle);
-      if (scrollTarget) {
-        scrollTarget.removeEventListener('scroll', onScroll);
-        scrollTarget.classList.remove('franq-activity-timeline');
-      }
+      unbind();
     },
   };
 })();
