@@ -34,12 +34,14 @@ class FakeSessionFactory:
 
 
 @pytest.mark.asyncio
-async def test_execution_is_persisted_and_enqueued_without_runner_readiness_gate(
+async def test_execution_is_persisted_enqueued_and_touches_conversation_recency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     factory = FakeSessionFactory()
     enqueued: list[dict[str, object]] = []
+    touched: list[object] = []
     execution = SimpleNamespace(id="execution-1")
+    session = object()
 
     class FakeSessionRepository:
         def __init__(self, db) -> None:
@@ -47,7 +49,10 @@ async def test_execution_is_persisted_and_enqueued_without_runner_readiness_gate
 
         async def get(self, session_id: str) -> object:
             assert session_id == "session-1"
-            return object()
+            return session
+
+        async def touch(self, entity: object) -> None:
+            touched.append(entity)
 
     class FakeExecutionRepository:
         def __init__(self, db) -> None:
@@ -83,6 +88,7 @@ async def test_execution_is_persisted_and_enqueued_without_runner_readiness_gate
 
     assert response == {"id": "execution-1"}
     assert factory.db.committed is True
+    assert touched == [session]
     assert enqueued == [
         {
             "event_type": "execution.requested",
