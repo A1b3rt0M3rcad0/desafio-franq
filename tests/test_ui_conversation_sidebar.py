@@ -3,12 +3,16 @@ from package.ui.components.assets import load_asset
 
 def test_conversation_sidebar_supports_right_click_delete_and_inline_rename() -> None:
     javascript = load_asset("conversation_sidebar.js")
+    css = load_asset("conversation_sidebar.css")
 
     assert 'addEventListener("contextmenu"' in javascript
     assert 'addEventListener("dblclick"' in javascript
     assert "delete_session_id" in javascript
     assert "rename_session_id" in javascript
+    assert "conversation-title-editor" in javascript
+    assert "window.prompt" not in javascript
     assert "window.confirm" in javascript
+    assert ".conversation-title-editor" in css
 
 
 def test_conversation_sidebar_loads_more_when_vertical_scroll_reaches_end() -> None:
