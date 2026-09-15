@@ -26,10 +26,10 @@ def render_conversation_sidebar(
             render_asset(
                 "conversation_item.html",
                 {
-                    "SESSION_ID": escape(session_id, quote=True),
-                    "TITLE": escape(title),
-                    "TITLE_ATTR": escape(title, quote=True),
                     "ACTIVE_CLASS": " is-active" if session_id == active_session_id else "",
+                    "SESSION_ID": escape(session_id, quote=True),
+                    "TITLE_ATTR": escape(title, quote=True),
+                    "TITLE": escape(title),
                 },
             )
         )
