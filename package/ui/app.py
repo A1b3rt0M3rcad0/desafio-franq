@@ -4,21 +4,22 @@ from typing import Any
 import httpx
 import streamlit as st
 
-from package.ui.activity_panel import (
-    ACTIVITY_PANEL_HEIGHT_PX,
-    activity_panel_marker,
-    mount_activity_panel_behavior,
+from package.ui.client import FranqApiClient, ObservedFrame
+from package.ui.components.activity_panel import (
+    ActivityPanel,
+    activity_from_mapping,
+    latest_activity,
 )
-from package.ui.client import FranqApiClient
-from package.ui.composer import render_chat_composer
+from package.ui.components.composer import render_chat_composer
+from package.ui.components.sticky_scroll import mount_sticky_chat_scroll
 from package.ui.observation import (
     ActivityPresentation,
     apply_observed_frame,
     new_observation_state,
     phase_label,
+    present_activity_frame,
 )
 from package.ui.rendering import render_result
-from package.ui.scroll import mount_sticky_chat_scroll
 from package.ui.settings import StreamlitSettings
 
 
@@ -66,6 +67,59 @@ def _clear_active_execution() -> None:
         del st.query_params["execution_id"]
 
 
+def _trace_cache() -> dict[str, list[dict[str, Any]]]:
+    cache = st.session_state.setdefault("execution_trace_cache", {})
+    if not isinstance(cache, dict):
+        cache = {}
+        st.session_state.execution_trace_cache = cache
+    return cache
+
+
+def _cache_execution_activities(execution_id: str, values: list[Any]) -> None:
+    serialized: list[dict[str, Any]] = []
+    for value in values:
+        if isinstance(value, ActivityPresentation):
+            serialized.append(value.as_dict())
+        elif isinstance(value, dict):
+            serialized.append(dict(value))
+    _trace_cache()[execution_id] = serialized
+
+
+def _historical_activities(
+    client: FranqApiClient,
+    execution_id: str,
+) -> list[ActivityPresentation]:
+    cache = _trace_cache()
+    stored = cache.get(execution_id)
+    if stored is None:
+        stored = []
+        try:
+            trace = client.get_execution_trace(execution_id)
+        except (httpx.HTTPError, ValueError):
+            trace = []
+        for step in trace:
+            if not isinstance(step, dict):
+                continue
+            payload = step.get("payload")
+            if not isinstance(payload, dict):
+                payload = {}
+            sequence = step.get("sequence")
+            if not isinstance(sequence, int) or isinstance(sequence, bool):
+                sequence = None
+            frame = ObservedFrame(
+                execution_id=execution_id,
+                type=str(step.get("event_type") or ""),
+                sequence=sequence,
+                payload=payload,
+            )
+            presentation = present_activity_frame(frame)
+            if presentation is not None:
+                stored.append(presentation.as_dict())
+        cache[execution_id] = stored
+
+    return [activity_from_mapping(value) for value in stored if isinstance(value, dict)]
+
+
 def _load_history(client: FranqApiClient, session_id: str) -> None:
     executions = client.list_session_executions(session_id)
     messages: list[dict[str, Any]] = []
@@ -88,6 +142,7 @@ def _load_history(client: FranqApiClient, session_id: str) -> None:
                     "content": str(execution.get("answer") or ""),
                     "result": execution.get("result"),
                     "execution_id": execution_id,
+                    "status": status,
                 }
             )
         elif status == "failed":
@@ -100,6 +155,7 @@ def _load_history(client: FranqApiClient, session_id: str) -> None:
                     ),
                     "result": None,
                     "execution_id": execution_id,
+                    "status": status,
                 }
             )
         elif status == "cancelled":
@@ -109,6 +165,7 @@ def _load_history(client: FranqApiClient, session_id: str) -> None:
                     "content": str(execution.get("answer") or ""),
                     "result": execution.get("result"),
                     "execution_id": execution_id,
+                    "status": status,
                     "cancelled": True,
                 }
             )
@@ -221,9 +278,31 @@ def _render_session_selector(client: FranqApiClient, session_id: str) -> None:
         _switch_session(client, selected)
 
 
-def _render_history() -> None:
+def _history_panel_state(message: dict[str, Any]) -> tuple[str, str]:
+    status = str(message.get("status") or "completed")
+    if status == "failed":
+        return "Falha na execução", "error"
+    if status == "cancelled":
+        return "Interrompido", "complete"
+    return "Concluído", "complete"
+
+
+def _render_history(client: FranqApiClient) -> None:
     for message in st.session_state.get("messages", []):
         with st.chat_message(message["role"]):
+            if message["role"] == "assistant":
+                execution_id = str(message.get("execution_id") or "")
+                if execution_id:
+                    activities = _historical_activities(client, execution_id)
+                    if activities:
+                        label, state = _history_panel_state(message)
+                        ActivityPanel(
+                            execution_id=execution_id,
+                            label=label,
+                            state=state,
+                            activities=activities,
+                        )
+
             content = str(message.get("content") or "")
             if content:
                 st.markdown(content)
@@ -280,43 +359,10 @@ def _apply_durable_result(
     return content_changed
 
 
-def _activity_from_state(value: dict[str, Any]) -> ActivityPresentation:
-    return ActivityPresentation(
-        sequence=value.get("sequence") if isinstance(value.get("sequence"), int) else None,
-        event_type=str(value.get("event_type") or ""),
-        title=str(value.get("title") or value.get("event_type") or "Atividade"),
-        detail=str(value.get("detail")) if value.get("detail") else None,
-        status=str(value.get("status") or "info"),
-    )
-
-
-def _latest_activity(active: dict[str, Any]) -> ActivityPresentation | None:
-    activities = active.get("activities")
-    if not isinstance(activities, list):
-        return None
-    for stored in reversed(activities):
-        if isinstance(stored, dict):
-            return _activity_from_state(stored)
-    return None
-
-
-def _render_activity(activity_view, activity: ActivityPresentation) -> None:
-    icon = {
-        "running": "◌",
-        "success": "✓",
-        "error": "✕",
-        "info": "•",
-    }.get(activity.status, "•")
-    activity_view.markdown(f"{icon} **{activity.title}**")
-    if not activity.detail:
-        return
-    if activity.event_type == "sql.generated" or "SELECT " in activity.detail.upper():
-        activity_view.code(activity.detail, language="sql")
-    else:
-        activity_view.caption(activity.detail)
-
-
-def _running_status_label(active: dict[str, Any], latest: ActivityPresentation | None = None) -> str:
+def _running_status_label(
+    active: dict[str, Any],
+    latest: ActivityPresentation | None = None,
+) -> str:
     if active.get("response_started"):
         return "Análise concluída"
     if latest is not None:
@@ -337,25 +383,17 @@ def _observe_execution(
     with response_container:
         with st.chat_message("assistant"):
             response_started = bool(active.get("response_started"))
-            status_view = st.status(
-                _running_status_label(active, _latest_activity(active)),
-                expanded=False,
+            stored_activities = [
+                activity_from_mapping(value)
+                for value in active.get("activities", [])
+                if isinstance(value, dict)
+            ]
+            panel = ActivityPanel(
+                execution_id=execution_id,
+                label=_running_status_label(active, latest_activity(active.get("activities", []))),
                 state="complete" if response_started else "running",
+                activities=stored_activities,
             )
-            activity_view = status_view.container(
-                height=ACTIVITY_PANEL_HEIGHT_PX,
-                border=False,
-                key=f"activity_timeline_{execution_id}",
-                gap="xxsmall",
-            )
-            activity_view.markdown(
-                activity_panel_marker(execution_id),
-                unsafe_allow_html=True,
-            )
-            mount_activity_panel_behavior(execution_id)
-            for stored in active.get("activities", []):
-                if isinstance(stored, dict):
-                    _render_activity(activity_view, _activity_from_state(stored))
 
             message_view = st.empty()
             if active.get("content"):
@@ -370,10 +408,10 @@ def _observe_execution(
                         st.session_state.last_sequence = frame.sequence
 
                     update = apply_observed_frame(active, frame)
-                    latest_activity: ActivityPresentation | None = None
+                    latest: ActivityPresentation | None = None
                     for activity in update.new_activities:
-                        latest_activity = activity
-                        _render_activity(activity_view, activity)
+                        latest = activity
+                        panel.append(activity)
 
                     if update.content_changed:
                         message_view.markdown(str(active.get("content") or ""))
@@ -381,20 +419,14 @@ def _observe_execution(
                     if update.transport_degraded:
                         realtime_degraded = True
                         if not active.get("response_started"):
-                            status_view.update(
-                                label="Reconectando à execução...",
-                                state="running",
-                            )
+                            panel.update(label="Reconectando à execução...", state="running")
                     elif active.get("response_started"):
-                        status_view.update(
-                            label="Análise concluída",
-                            state="complete",
-                        )
+                        panel.update(label="Análise concluída", state="complete")
                     elif update.terminal_status == "failed":
-                        status_view.update(label="Falha na execução", state="error")
+                        panel.update(label="Falha na execução", state="error")
                     else:
-                        status_view.update(
-                            label=_running_status_label(active, latest_activity),
+                        panel.update(
+                            label=_running_status_label(active, latest),
                             state="running",
                         )
 
@@ -424,10 +456,7 @@ def _observe_execution(
                 if durable_status in {"completed", "failed", "cancelled"}:
                     terminal_status = durable_status
                 elif not active.get("response_started"):
-                    status_view.update(
-                        label="Reconectando à execução...",
-                        state="running",
-                    )
+                    panel.update(label="Reconectando à execução...", state="running")
                 st.session_state.active_response = active
 
             if terminal_status not in {"completed", "failed", "cancelled"}:
@@ -453,16 +482,12 @@ def _observe_execution(
                 else:
                     st.session_state.active_response = active
                     if realtime_degraded and not active.get("response_started"):
-                        status_view.update(
-                            label="Reconectando à execução...",
-                            state="running",
-                        )
+                        panel.update(label="Reconectando à execução...", state="running")
                     elif active.get("response_started"):
-                        status_view.update(
-                            label="Análise concluída",
-                            state="complete",
-                        )
+                        panel.update(label="Análise concluída", state="complete")
                     return False
+
+            _cache_execution_activities(execution_id, list(active.get("activities", [])))
 
             if terminal_status == "completed":
                 final_answer = str(
@@ -470,13 +495,14 @@ def _observe_execution(
                 )
                 message_view.markdown(final_answer)
                 render_result(active.get("result"))
-                status_view.update(label="Concluído", state="complete")
+                panel.update(label="Concluído", state="complete")
                 st.session_state.messages.append(
                     {
                         "role": "assistant",
                         "content": final_answer,
                         "result": active.get("result"),
                         "execution_id": execution_id,
+                        "status": "completed",
                     }
                 )
                 _clear_active_execution()
@@ -487,13 +513,14 @@ def _observe_execution(
                 if partial:
                     message_view.markdown(partial)
                 st.caption("Resposta interrompida pelo usuário.")
-                status_view.update(label="Interrompido", state="complete")
+                panel.update(label="Interrompido", state="complete")
                 st.session_state.messages.append(
                     {
                         "role": "assistant",
                         "content": partial,
                         "result": active.get("result"),
                         "execution_id": execution_id,
+                        "status": "cancelled",
                         "cancelled": True,
                     }
                 )
@@ -506,13 +533,14 @@ def _observe_execution(
                     f"{active.get('error') or 'erro desconhecido'}"
                 )
                 st.error(final_error)
-                status_view.update(label="Falha na execução", state="error")
+                panel.update(label="Falha na execução", state="error")
                 st.session_state.messages.append(
                     {
                         "role": "assistant",
                         "content": final_error,
                         "result": None,
                         "execution_id": execution_id,
+                        "status": "failed",
                     }
                 )
                 _clear_active_execution()
@@ -583,7 +611,7 @@ def main() -> None:
                 st.error(f"Não foi possível criar uma nova sessão: {exc}")
         st.caption(f"Sessão atual: `{session_id}`")
 
-    _render_history()
+    _render_history(client)
 
     query_execution = _query_value("execution_id")
     active_execution = query_execution or st.session_state.get("active_execution_id")
@@ -602,11 +630,7 @@ def main() -> None:
             _request_stop(client, execution_id)
         if active_response_container is None:
             active_response_container = st.container()
-        finished = _observe_execution(
-            client,
-            execution_id,
-            active_response_container,
-        )
+        finished = _observe_execution(client, execution_id, active_response_container)
         if finished:
             st.rerun()
         time.sleep(0.2)
