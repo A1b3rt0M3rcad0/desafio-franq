@@ -1,3 +1,5 @@
+import time
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
@@ -83,6 +85,8 @@ def _load_history(client: FranqApiClient, session_id: str) -> None:
     st.session_state.last_sequence = None
     if active_execution_id:
         st.query_params["execution_id"] = active_execution_id
+    elif "execution_id" in st.query_params:
+        del st.query_params["execution_id"]
 
 
 def _ensure_session(client: FranqApiClient) -> str:
@@ -125,6 +129,59 @@ def _new_conversation(client: FranqApiClient) -> None:
     st.rerun()
 
 
+def _switch_session(client: FranqApiClient, session_id: str) -> None:
+    _set_session(session_id)
+    _clear_active_execution()
+    _load_history(client, session_id)
+    st.rerun()
+
+
+def _session_label(session: dict[str, Any]) -> str:
+    session_id = str(session.get("id") or "")
+    metadata = session.get("metadata")
+    if isinstance(metadata, dict):
+        title = metadata.get("title")
+        if title:
+            return str(title)
+    created_at = str(session.get("created_at") or "").replace("T", " ")[:16]
+    short_id = session_id[:8] if session_id else "sessão"
+    return f"{created_at} · {short_id}" if created_at else short_id
+
+
+def _render_session_selector(client: FranqApiClient, session_id: str) -> None:
+    try:
+        sessions = client.list_sessions(limit=100)
+    except (httpx.HTTPError, ValueError) as exc:
+        st.warning(f"Não foi possível carregar as sessões: {exc}")
+        return
+
+    by_id = {
+        str(session["id"]): session
+        for session in sessions
+        if isinstance(session, dict) and session.get("id")
+    }
+    if session_id not in by_id:
+        try:
+            by_id[session_id] = client.get_session(session_id)
+        except httpx.HTTPError:
+            pass
+
+    options = list(by_id)
+    if not options:
+        return
+
+    index = options.index(session_id) if session_id in options else 0
+    selected = st.selectbox(
+        "Conversas",
+        options,
+        index=index,
+        format_func=lambda value: _session_label(by_id[value]),
+        key=f"session_selector_{session_id}",
+    )
+    if selected != session_id:
+        _switch_session(client, selected)
+
+
 def _render_history() -> None:
     for message in st.session_state.get("messages", []):
         with st.chat_message(message["role"]):
@@ -162,6 +219,10 @@ def _status_label(frame: ObservedFrame) -> str | None:
         return "Dados coletados. Continuando análise..."
     if frame.type == "answer.generated":
         return "Preparando a resposta..."
+    if frame.type == "execution.completed":
+        return "Concluído"
+    if frame.type == "execution.failed":
+        return "Falha na execução"
     return None
 
 
@@ -194,9 +255,9 @@ def _observe_execution(client: FranqApiClient, execution_id: str) -> bool:
 
     with st.chat_message("assistant"):
         status_view = st.status("Aguardando o agente...", expanded=False)
-        answer_view = st.empty()
 
-        try:
+        def answer_stream() -> Iterator[str]:
+            nonlocal answer, result, terminal_status, error
             for frame in client.observe_execution(
                 execution_id,
                 last_sequence=st.session_state.get("last_sequence"),
@@ -211,7 +272,14 @@ def _observe_execution(client: FranqApiClient, execution_id: str) -> bool:
                 if frame.type == "execution.state":
                     state_answer = frame.payload.get("partial_answer") or frame.payload.get("answer")
                     if state_answer:
-                        answer = str(state_answer)
+                        candidate = str(state_answer)
+                        if not answer:
+                            answer = candidate
+                            yield candidate
+                        elif candidate.startswith(answer) and len(candidate) > len(answer):
+                            suffix = candidate[len(answer) :]
+                            answer = candidate
+                            yield suffix
                     if isinstance(frame.payload.get("result"), dict):
                         result = frame.payload["result"]
                     state_status = str(frame.payload.get("status") or "")
@@ -219,10 +287,22 @@ def _observe_execution(client: FranqApiClient, execution_id: str) -> bool:
                         terminal_status = state_status
                         error = frame.payload.get("error")
                 elif frame.type == "assistant.delta":
-                    answer += str(frame.payload.get("content") or "")
+                    content = str(frame.payload.get("content") or "")
+                    if content:
+                        answer += content
+                        yield content
                 elif frame.type == "execution.completed":
                     terminal_status = "completed"
-                    answer = str(frame.payload.get("answer") or answer)
+                    final_answer = str(frame.payload.get("answer") or answer)
+                    if final_answer and not answer:
+                        answer = final_answer
+                        yield final_answer
+                    elif final_answer.startswith(answer) and len(final_answer) > len(answer):
+                        suffix = final_answer[len(answer) :]
+                        answer = final_answer
+                        yield suffix
+                    else:
+                        answer = final_answer or answer
                     if isinstance(frame.payload.get("result"), dict):
                         result = frame.payload["result"]
                 elif frame.type == "execution.failed":
@@ -231,9 +311,10 @@ def _observe_execution(client: FranqApiClient, execution_id: str) -> bool:
                 elif frame.type == "execution.realtime_unavailable":
                     status_view.update(label="Recuperando estado durável...")
 
-                if answer:
-                    answer_view.markdown(answer)
-
+        try:
+            streamed_answer = st.write_stream(answer_stream())
+            if isinstance(streamed_answer, str) and streamed_answer and not answer:
+                answer = streamed_answer
         except (httpx.HTTPError, ValueError) as exc:
             status_view.update(label="Recuperando estado da execução...")
             terminal_status, answer, result, durable_error = _refresh_durable_result(
@@ -248,19 +329,28 @@ def _observe_execution(client: FranqApiClient, execution_id: str) -> bool:
                 return False
 
         if terminal_status not in {"completed", "failed"}:
-            durable_status, answer, result, durable_error = _refresh_durable_result(
-                client,
-                execution_id,
-                current_answer=answer,
-                current_result=result,
-            )
-            if durable_status in {"completed", "failed"}:
-                terminal_status = durable_status
+            status_view.update(label="Finalizando execução...")
+            for _ in range(40):
+                durable_status, durable_answer, durable_result, durable_error = (
+                    _refresh_durable_result(
+                        client,
+                        execution_id,
+                        current_answer=answer,
+                        current_result=result,
+                    )
+                )
+                answer = durable_answer
+                result = durable_result
                 error = durable_error or error
+                if durable_status in {"completed", "failed"}:
+                    terminal_status = durable_status
+                    break
+                time.sleep(0.25)
 
         if terminal_status == "completed":
             final_answer = answer or "Execução concluída sem conteúdo textual."
-            answer_view.markdown(final_answer)
+            if not answer:
+                st.markdown(final_answer)
             render_result(result)
             status_view.update(label="Concluído", state="complete")
             st.session_state.messages.append(
@@ -276,7 +366,7 @@ def _observe_execution(client: FranqApiClient, execution_id: str) -> bool:
 
         if terminal_status == "failed":
             final_error = f"Não foi possível concluir a execução: {error or 'erro desconhecido'}"
-            answer_view.error(final_error)
+            st.error(final_error)
             status_view.update(label="Falha na execução", state="error")
             st.session_state.messages.append(
                 {
@@ -289,9 +379,7 @@ def _observe_execution(client: FranqApiClient, execution_id: str) -> bool:
             _clear_active_execution()
             return True
 
-        status_view.update(label="Execução ainda em andamento")
-        if answer:
-            render_result(result)
+        status_view.update(label="Execução ainda em andamento", state="running")
         return False
 
 
@@ -312,12 +400,14 @@ def main() -> None:
         st.stop()
 
     with st.sidebar:
-        st.caption(f"Sessão: `{session_id}`")
+        st.subheader("Conversas")
+        _render_session_selector(client, session_id)
         if st.button("Nova conversa", use_container_width=True):
             try:
                 _new_conversation(client)
             except httpx.HTTPError as exc:
                 st.error(f"Não foi possível criar uma nova sessão: {exc}")
+        st.caption(f"Sessão atual: `{session_id}`")
 
     _render_history()
 
@@ -326,7 +416,9 @@ def main() -> None:
     if active_execution:
         st.session_state.active_execution_id = active_execution
         st.query_params["execution_id"] = active_execution
-        _observe_execution(client, active_execution)
+        if not _observe_execution(client, active_execution):
+            time.sleep(0.5)
+            st.rerun()
 
     question = st.chat_input(
         "Pergunte algo sobre os dados...",
@@ -356,7 +448,9 @@ def main() -> None:
     st.session_state.active_execution_id = execution_id
     st.session_state.last_sequence = None
     st.query_params["execution_id"] = execution_id
-    _observe_execution(client, execution_id)
+    if not _observe_execution(client, execution_id):
+        time.sleep(0.5)
+        st.rerun()
 
 
 if __name__ == "__main__":
