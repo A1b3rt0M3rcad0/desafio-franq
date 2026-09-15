@@ -37,13 +37,8 @@ async def create_execution(
     request: CreateExecutionRequest,
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
 ) -> ExecutionResponse:
-    """Accept the execution durably; provider availability belongs to the Runner.
+    """Accept the execution durably; provider availability belongs to the Runner."""
 
-    The API owns acceptance only. It persists the Execution and Outbox message in
-    the same transaction and returns 202. A degraded Runner can then consume the
-    request and mark the Execution as failed, which keeps the failure observable
-    through the normal Observer/SSE path instead of short-circuiting in the API.
-    """
     async with session_factory() as db:
         if await SessionRepository(db).get(session_id) is None:
             raise HTTPException(status_code=404, detail="Session not found")
@@ -62,6 +57,29 @@ async def create_execution(
         return present_execution(execution)
 
 
+@router.post(
+    "/executions/{execution_id}/cancel",
+    response_model=ExecutionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def cancel_execution(
+    execution_id: str,
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
+) -> ExecutionResponse:
+    """Request cooperative cancellation without coupling the API to the Runner process."""
+
+    async with session_factory() as db:
+        repository = ExecutionRepository(db)
+        execution = await repository.get(execution_id)
+        if execution is None:
+            raise HTTPException(status_code=404, detail="Execution not found")
+
+        await repository.request_cancel(execution)
+        await db.commit()
+        await db.refresh(execution)
+        return present_execution(execution)
+
+
 @router.get("/executions/{execution_id}", response_model=ExecutionResponse)
 async def get_execution(
     execution_id: str,
@@ -75,6 +93,6 @@ async def get_execution(
         response = present_execution(execution)
 
     hot = await hot_state.get(execution_id)
-    if hot and response.status == "running" and hot.get("partial_answer"):
+    if hot and response.status in {"running", "cancel_requested"} and hot.get("partial_answer"):
         response.answer = str(hot["partial_answer"])
     return response
