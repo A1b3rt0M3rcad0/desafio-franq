@@ -80,6 +80,14 @@ def expected_schema() -> dict[str, set[str]]:
     }
 
 
+def expected_legacy_schema() -> dict[str, set[str]]:
+    """Schema represented by revision 0001 before later model additions."""
+
+    expected = expected_schema()
+    expected["agent_sessions"].discard("title")
+    return expected
+
+
 def main() -> None:
     load_dotenv()
     database_url = os.environ.get("AGENT_DATABASE_URL")
@@ -87,7 +95,7 @@ def main() -> None:
         raise RuntimeError("AGENT_DATABASE_URL is required to bootstrap migrations")
 
     actual = asyncio.run(inspect_database(database_url))
-    inspection = classify_schema(actual, expected_schema())
+    inspection = classify_schema(actual, expected_legacy_schema())
     config = Config("alembic.ini")
 
     if inspection.state == SchemaState.LEGACY_INCOMPATIBLE:
