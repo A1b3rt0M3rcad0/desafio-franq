@@ -1,13 +1,7 @@
-import asyncio
 from dataclasses import dataclass
 from typing import Any
 
 from package.agent.observer.contracts import ExecutionEventSink
-from package.agent.observer.events import (
-    ExecutionEvent,
-    ExecutionEventType,
-    ExecutionPhase,
-)
 from package.agent.runtime.contracts import AgentProgram
 from package.agent.runtime.loop import RuntimePolicy
 
@@ -19,15 +13,17 @@ class RuntimeResult:
 
 
 class AgentRuntime:
+    """Executes the Agent program while the Runner owns durable lifecycle transitions."""
+
     def __init__(
         self,
         *,
         program: AgentProgram,
-        observer: ExecutionEventSink,
+        event_sink: ExecutionEventSink,
         policy: RuntimePolicy,
     ) -> None:
         self._program = program
-        self._observer = observer
+        self._event_sink = event_sink
         self._policy = policy
 
     async def run(
@@ -37,56 +33,14 @@ class AgentRuntime:
         session_id: str,
         question: str,
     ) -> RuntimeResult:
-        await self._observer.emit(
-            ExecutionEvent(
-                execution_id=execution_id,
-                type=ExecutionEventType.EXECUTION_STARTED,
-                payload={"session_id": session_id},
-            )
+        program_result = await self._program.execute(
+            execution_id=execution_id,
+            session_id=session_id,
+            question=question,
+            observer=self._event_sink,
+            policy=self._policy,
         )
-
-        try:
-            program_result = await self._program.execute(
-                execution_id=execution_id,
-                session_id=session_id,
-                question=question,
-                observer=self._observer,
-                policy=self._policy,
-            )
-            result = RuntimeResult(
-                answer=program_result.answer,
-                result=program_result.result,
-            )
-            await self._observer.emit(
-                ExecutionEvent(
-                    execution_id=execution_id,
-                    type=ExecutionEventType.EXECUTION_COMPLETED,
-                    payload={"answer": result.answer, "result": result.result},
-                )
-            )
-            return result
-        except asyncio.CancelledError:
-            await self._observer.emit(
-                ExecutionEvent(
-                    execution_id=execution_id,
-                    type=ExecutionEventType.EXECUTION_PHASE_CHANGED,
-                    payload={"phase": ExecutionPhase.CANCELLED.value},
-                )
-            )
-            await self._observer.emit(
-                ExecutionEvent(
-                    execution_id=execution_id,
-                    type=ExecutionEventType.EXECUTION_CANCELLED,
-                    payload={"reason": "user_requested"},
-                )
-            )
-            raise
-        except Exception as exc:
-            await self._observer.emit(
-                ExecutionEvent(
-                    execution_id=execution_id,
-                    type=ExecutionEventType.EXECUTION_FAILED,
-                    payload={"error": str(exc)},
-                )
-            )
-            raise
+        return RuntimeResult(
+            answer=program_result.answer,
+            result=program_result.result,
+        )
