@@ -4,8 +4,7 @@ x-python-service: &python-service
     dockerfile: Dockerfile
   image: desafio-franq-app:local
   env_file:
-    - path: .env
-      required: false
+    - .env
   init: true
   restart: unless-stopped
 
