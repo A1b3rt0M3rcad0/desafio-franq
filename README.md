@@ -158,36 +158,73 @@ Quando houver visualização, o frontend espera um resultado no formato:
 
 Se houver dados tabulares mas nenhuma especificação de visualização, a interface degrada automaticamente para tabela. Uma especificação inválida também degrada para tabela em vez de quebrar a conversa.
 
-## Execução local
+## Execução local com Docker Compose
 
-Copie as variáveis de ambiente e suba PostgreSQL e Redis:
+O `compose.yaml` sobe a aplicação completa: PostgreSQL, Redis, FastAPI, Runner e Streamlit. O mesmo `Dockerfile` é reutilizado pelos três processos Python, mantendo API, Runner e interface como processos separados apesar de compartilharem a mesma imagem.
+
+Primeiro copie as variáveis de ambiente e preencha a chave do provider selecionado:
 
 ```bash
 cp .env.example .env
-docker compose up -d
 ```
 
-Preencha a chave do provider selecionado em `.env` e instale o projeto:
+Exemplo para OpenAI:
+
+```env
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sua-chave
+```
+
+Depois suba todo o stack:
+
+```bash
+docker compose up --build
+```
+
+Quando os serviços estiverem saudáveis, a conversa pode ser iniciada diretamente em:
+
+```text
+http://localhost:8501
+```
+
+A API fica disponível em:
+
+```text
+http://localhost:8000
+```
+
+O startup é ordenado por healthchecks: PostgreSQL e Redis ficam saudáveis, a API sobe e cria o schema interno quando necessário, depois Runner e Streamlit são iniciados. Dentro da rede Docker, a API e o Runner recebem automaticamente URLs internas para PostgreSQL/Redis, enquanto o Streamlit utiliza `http://api:8000`.
+
+O serviço `runner` é escalável. Cada container recebe o próprio hostname como `RUNNER_ID`, então é possível iniciar múltiplos consumers sem colisão de identidade:
+
+```bash
+docker compose up --build --scale runner=2
+```
+
+O PostgreSQL utiliza volume nomeado para preservar Sessions, Executions, Outbox, traces e contexto entre reinicializações do stack. O Redis permanece responsável apenas pelo estado realtime/hot.
+
+Para encerrar:
+
+```bash
+docker compose down
+```
+
+Para também remover o volume durável de desenvolvimento:
+
+```bash
+docker compose down -v
+```
+
+### Execução sem containers para os processos Python
+
+Também é possível subir apenas PostgreSQL/Redis e executar API, Runner e Streamlit localmente. Nesse caso mantenha os valores `localhost` definidos em `.env` e execute:
 
 ```bash
 pip install -e .
-```
-
-Em terminais separados, execute:
-
-```bash
 uvicorn package.api.http.app:app --reload
-```
-
-```bash
 python -m package.runner.main
-```
-
-```bash
 streamlit run package/ui/app.py
 ```
-
-A interface usa `STREAMLIT_API_BASE_URL`, cujo valor recomendado para desenvolvimento local é `http://localhost:8000`.
 
 ## Testes
 
@@ -195,10 +232,10 @@ A interface usa `STREAMLIT_API_BASE_URL`, cujo valor recomendado para desenvolvi
 pytest
 ```
 
-O workflow `.github/workflows/tests.yml` executa a suíte automaticamente em todo pull request direcionado à `master`.
+O workflow `.github/workflows/tests.yml` valida também a configuração do Docker Compose e executa a suíte automaticamente em todo pull request direcionado à `master`.
 
 ## Estado atual
 
-Já estão implementados: execução durável via Outbox, Runner independente, Observer com reattach, Context Manager com snapshots e recuperação lexical, Skills lazy-loaded, providers OpenAI/DeepSeek, Database Tool read-only, loop LangGraph e interface Streamlit.
+Já estão implementados: execução durável via Outbox, Runner independente, Observer com reattach, Context Manager com snapshots e recuperação lexical, Skills lazy-loaded, providers OpenAI/DeepSeek, Database Tool read-only, loop LangGraph, interface Streamlit e stack completo via Docker Compose.
 
 As próximas capacidades específicas do desafio são consolidar o tratamento dirigido de erros SQL, estruturar o resultado analítico final e fazer o Agent produzir a especificação de visualização consumida pela interface.
