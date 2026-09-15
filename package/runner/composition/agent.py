@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from package.agent.cache.event_stream import ExecutionEventStream
 from package.agent.cache.execution_state import ExecutionHotState
+from package.agent.observer.contracts import ExecutionEventSink
 from package.agent.observer.publisher import RedisExecutionEventSink
 from package.agent.runtime.contracts import AgentProgram
 from package.agent.runtime.execution import AgentRuntime
@@ -22,13 +23,15 @@ class AgentRuntimeFactory:
     max_parallel_tool_calls_per_tool: int
     projection_max_activities: int
 
-    def create(self) -> AgentRuntime:
-        event_sink = RedisExecutionEventSink(
+    def create_event_sink(self) -> ExecutionEventSink:
+        return RedisExecutionEventSink(
             hot_state=self.hot_state,
             event_stream=self.event_stream,
             projection_max_activities=self.projection_max_activities,
             trace_recorder=TraceRecorder(self.session_factory),
         )
+
+    def create(self) -> AgentRuntime:
         policy = create_runtime_policy(
             max_iterations=self.max_iterations,
             max_sql_retries=self.max_sql_retries,
@@ -36,6 +39,6 @@ class AgentRuntimeFactory:
         )
         return AgentRuntime(
             program=self.program,
-            observer=event_sink,
+            event_sink=self.create_event_sink(),
             policy=policy,
         )
