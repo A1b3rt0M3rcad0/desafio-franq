@@ -171,7 +171,7 @@ cp .env.example .env
 Configure um provider, por exemplo:
 
 ```env
-LLM_PROVIDER=openai
+LLM_PROVIDER=deepseek
 OPENAI_API_KEY=sua-chave
 ```
 
