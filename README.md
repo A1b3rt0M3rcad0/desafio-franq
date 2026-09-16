@@ -283,6 +283,7 @@ Possíveis evoluções, fora do escopo necessário para o desafio:
 - autenticação e isolamento multi-tenant;
 - observabilidade distribuída com tracing externo;
 - filas especializadas para cargas maiores ou distribuição entre múltiplos nós.
+- hoje existe uma lacuna entre a execução e a persistência dos eventos. Uma melhoria significativa seria introduzir um journal persistente, evento a evento, em vez de depender apenas do hot state e do streaming durante a execução. Isso aumentaria consideravelmente a resiliência e a observabilidade do sistema, permitindo, por exemplo, retomar uma execução a partir do último evento persistido em caso de falha, interrupção ou reinicialização. Além disso, possibilitaria manter um trace completo e incremental da execução, sem depender de um estado terminal para consolidar e persistir as informações produzidas ao longo da execução do agente.
 
 ## Documentação
 
