@@ -3,7 +3,7 @@
 Implementação do **Desafio Técnico 1 da Franq**: um assistente de dados capaz de investigar autonomamente um banco SQLite, descobrir o schema em tempo de execução, executar múltiplas consultas, se recuperar de falhas e responder perguntas de negócio com rastreabilidade e visualizações inline.
 
 <p align="center">
-  <img src="docs/images/assistant-overview.webp" alt="Assistente Virtual de Dados executando uma investigação" width="100%" />
+  <img src="docs/images/assistant-overview.png" alt="Assistente Virtual de Dados executando uma investigação" width="100%" />
 </p>
 
 ## O que foi implementado
@@ -25,7 +25,7 @@ A interface é implementada em Streamlit e consome somente a API pública do sis
 ### Resposta analítica com tabela e gráfico
 
 <p align="center">
-  <img src="docs/images/analytical-result-overview.webp" alt="Resultado analítico com tabela e gráfico" width="100%" />
+  <img src="docs/images/analytical-result-overview.png" alt="Resultado analítico com tabela e gráfico" width="100%" />
 </p>
 
 O Agent pode combinar múltiplas consultas e apresentar diferentes perspectivas dentro da mesma resposta. A visualização é escolhida somente quando melhora materialmente a comunicação; os cálculos de negócio continuam sendo feitos durante a investigação, e não pelo renderer.
@@ -33,7 +33,7 @@ O Agent pode combinar múltiplas consultas e apresentar diferentes perspectivas 
 ### Execução transparente
 
 <p align="center">
-  <img src="docs/images/execution-trace.webp" alt="Painel de atividades mostrando consultas SQL executadas" width="100%" />
+  <img src="docs/images/execution-trace.png" alt="Painel de atividades mostrando consultas SQL executadas" width="100%" />
 </p>
 
 O painel não expõe chain-of-thought. Ele mostra **ações verificáveis da execução**: fases, Tools utilizadas, argumentos, consultas SQL, sucessos, falhas e transições relevantes.
@@ -82,7 +82,6 @@ A documentação detalhada das decisões, ownership de dados, fluxo de execuçã
 ## Estrutura do repositório
 
 ```text
-.
 ├── packages/
 │   ├── core/
 │   │   ├── alembic.ini
