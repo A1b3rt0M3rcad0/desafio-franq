@@ -23,7 +23,7 @@ from package.ui.observation import (
     phase_label,
     present_activity_frame,
 )
-from package.ui.rendering import render_result
+from package.ui.rendering import render_rich_content
 from package.ui.settings import StreamlitSettings
 
 
@@ -321,11 +321,12 @@ def _render_history(client: FranqApiClient) -> None:
 
             content = str(message.get("content") or "")
             if content:
-                st.markdown(content)
+                if message["role"] == "assistant":
+                    render_rich_content(content)
+                else:
+                    st.markdown(content)
             if message.get("cancelled"):
                 st.caption("Resposta interrompida pelo usuário.")
-            if message["role"] == "assistant":
-                render_result(message.get("result"))
 
 
 def _refresh_durable_result(
@@ -387,6 +388,12 @@ def _running_status_label(
     return phase_label(str(active.get("phase") or "pending")) or "Execução em andamento..."
 
 
+def _render_message_view(message_view, content: str, *, allow_partial: bool) -> None:
+    message_view.empty()
+    with message_view.container():
+        render_rich_content(content, allow_partial=allow_partial)
+
+
 def _observe_execution(
     client: FranqApiClient,
     execution_id: str,
@@ -413,7 +420,11 @@ def _observe_execution(
 
             message_view = st.empty()
             if active.get("content"):
-                message_view.markdown(str(active["content"]))
+                _render_message_view(
+                    message_view,
+                    str(active["content"]),
+                    allow_partial=True,
+                )
 
             try:
                 for frame in client.observe_execution(
@@ -430,7 +441,11 @@ def _observe_execution(
                         panel.append(activity)
 
                     if update.content_changed:
-                        message_view.markdown(str(active.get("content") or ""))
+                        _render_message_view(
+                            message_view,
+                            str(active.get("content") or ""),
+                            allow_partial=True,
+                        )
 
                     if update.transport_degraded:
                         realtime_degraded = True
@@ -468,7 +483,11 @@ def _observe_execution(
                     error=durable_error,
                 )
                 if changed:
-                    message_view.markdown(str(active.get("content") or ""))
+                    _render_message_view(
+                        message_view,
+                        str(active.get("content") or ""),
+                        allow_partial=True,
+                    )
                 if durable_status in {"completed", "failed", "cancelled"}:
                     terminal_status = durable_status
                 elif not active.get("response_started"):
@@ -492,7 +511,11 @@ def _observe_execution(
                     error=durable_error,
                 )
                 if changed:
-                    message_view.markdown(str(active.get("content") or ""))
+                    _render_message_view(
+                        message_view,
+                        str(active.get("content") or ""),
+                        allow_partial=True,
+                    )
                 if durable_status in {"completed", "failed", "cancelled"}:
                     terminal_status = durable_status
                 else:
@@ -509,8 +532,7 @@ def _observe_execution(
                 final_answer = str(
                     active.get("content") or "Execução concluída sem conteúdo textual."
                 )
-                message_view.markdown(final_answer)
-                render_result(active.get("result"))
+                _render_message_view(message_view, final_answer, allow_partial=False)
                 panel.update(label="Concluído", state="complete")
                 st.session_state.messages.append(
                     {
@@ -527,7 +549,7 @@ def _observe_execution(
             if terminal_status == "cancelled":
                 partial = str(active.get("content") or "")
                 if partial:
-                    message_view.markdown(partial)
+                    _render_message_view(message_view, partial, allow_partial=False)
                 st.caption("Resposta interrompida pelo usuário.")
                 panel.update(label="Interrompido", state="complete")
                 st.session_state.messages.append(
