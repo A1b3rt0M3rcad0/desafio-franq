@@ -1,20 +1,87 @@
-# Desafio Franq
+# Desafio Franq — Assistente Virtual de Dados
 
-Implementação do Desafio Técnico 1: um Assistente Virtual de Dados capaz de investigar um banco SQLite de forma autônoma, executar múltiplas operações, recuperar-se de falhas e responder perguntas de negócio com rastreabilidade.
+Implementação do **Desafio Técnico 1 da Franq**: um assistente de dados capaz de investigar autonomamente um banco SQLite, descobrir o schema em tempo de execução, executar múltiplas consultas, se recuperar de falhas e responder perguntas de negócio com rastreabilidade e visualizações inline.
 
-O repositório usa uma topologia de packages inspirada em projetos como Woobe e n8n. Cada diretório em `packages/` representa um boundary executável ou distribuível claro:
+<p align="center">
+  <img src="docs/images/assistant-overview.png" alt="Assistente Virtual de Dados executando uma investigação" width="100%" />
+</p>
 
-- `packages/core`: runtime do Agent, contexto, Skills, Tools, Observer, trace, persistência e migrations;
-- `packages/api`: composition root HTTP/SSE;
-- `packages/runner`: consumer independente responsável pela execução do Agent;
-- `packages/ui`: interface Streamlit, que consome somente a API pública.
+## O que foi implementado
 
-Os imports Python continuam sob o namespace `package.*`, mas a propriedade física do código agora acompanha os boundaries de runtime.
+- **Agent autônomo com LangGraph** para decompor perguntas e iterar entre análise, Skills e Tools.
+- **Descoberta dinâmica do schema SQLite**, sem depender de tabelas ou colunas hardcoded no prompt.
+- **Database Tool read-only** com validação de SQL, timeout, limite de linhas e conexão somente leitura.
+- **Recuperação de falhas durante a investigação**: erros de Tool retornam ao Agent como observação e podem gerar uma nova tentativa.
+- **Visualizações inline geradas pelo próprio Agent**, com suporte a tabela, barras, linha e dispersão.
+- **Execução durável e desacoplada da conexão do cliente** com PostgreSQL, Outbox e Runner independente.
+- **Streaming e reattach via SSE/Redis**: refresh ou perda da conexão não reinicia a execução.
+- **Rastreabilidade das operações observáveis**, incluindo iterações, chamadas de Tool, SQL e eventos da execução.
+- **Histórico de conversas, cancelamento, migrations Alembic e CI automatizado**.
+
+## Demonstração
+
+A interface é implementada em Streamlit e consome somente a API pública do sistema. O usuário envia uma pergunta em linguagem natural e acompanha as operações observáveis realizadas durante a investigação.
+
+### Resposta analítica com tabela e gráfico
+
+<p align="center">
+  <img src="docs/images/analytical-result-overview.png" alt="Resultado analítico com tabela e gráfico" width="100%" />
+</p>
+
+O Agent pode combinar múltiplas consultas e apresentar diferentes perspectivas dentro da mesma resposta. A visualização é escolhida somente quando melhora materialmente a comunicação; os cálculos de negócio continuam sendo feitos durante a investigação, e não pelo renderer.
+
+### Execução transparente
+
+<p align="center">
+  <img src="docs/images/execution-trace.png" alt="Painel de atividades mostrando consultas SQL executadas" width="100%" />
+</p>
+
+O painel não expõe chain-of-thought. Ele mostra **ações verificáveis da execução**: fases, Tools utilizadas, argumentos, consultas SQL, sucessos, falhas e transições relevantes.
+
+## Como o Agent investiga os dados
+
+```mermaid
+flowchart LR
+    U[Usuário] --> Q[Pergunta em linguagem natural]
+    Q --> A[Agent]
+    A --> S[Descoberta do schema]
+    S --> P[Planejamento / análise]
+    P --> SQL[SQL analítico]
+    SQL --> DB[(SQLite read-only)]
+    DB --> R[Resultado ou erro]
+    R --> A
+    A -->|evidência suficiente| F[Resposta final]
+    F --> V[Texto + tabelas/gráficos]
+```
+
+O runtime é iterativo. Uma única pergunta pode exigir inspeção de schema, várias consultas independentes ou dependentes, correção de SQL e consolidação dos resultados antes da resposta final.
+
+## Arquitetura resumida
+
+```mermaid
+flowchart LR
+    UI[Streamlit] -->|HTTP / SSE| API[FastAPI]
+    API --> PG[(PostgreSQL)]
+    PG --> OB[Outbox]
+    OB --> RUN[Runner]
+    RUN --> AR[Agent Runtime]
+    AR --> LLM[LLM Provider]
+    AR --> CTX[Context Manager]
+    AR --> SK[Skills]
+    AR --> TOOL[Database Tool]
+    TOOL --> SQ[(SQLite do desafio)]
+    AR --> REDIS[(Redis)]
+    REDIS --> OBS[Execution Observer]
+    OBS -->|SSE| UI
+```
+
+**PostgreSQL** mantém o estado durável da aplicação. **Redis** mantém hot state e o stream realtime. O banco SQLite fornecido pelo desafio é tratado como dado externo e é montado somente no Runner, em modo read-only.
+
+A documentação detalhada das decisões, ownership de dados, fluxo de execução, Context Manager, Observer, Outbox, Runner, LLM providers e tratamento de falhas está em **[docs/architecture.md](docs/architecture.md)**.
 
 ## Estrutura do repositório
 
 ```text
-.
 ├── packages/
 │   ├── core/
 │   │   ├── alembic.ini
@@ -32,65 +99,29 @@ Os imports Python continuam sob o namespace `package.*`, mas a propriedade físi
 │       └── src/package/ui/
 ├── docker/
 │   └── images/app/
-│       ├── Dockerfile
-│       └── entrypoint.sh
+│       └── Dockerfile
 ├── data/
 │   └── challenge-1/anexo_desafio_1.db
 ├── docs/
 │   ├── architecture.md
-│   └── challenge.pdf
+│   ├── challenge.pdf
+│   └── images/
 ├── tests/
 ├── compose.yaml
 ├── pyproject.toml
 └── README.md
 ```
 
-## Arquitetura
+Cada diretório em `packages/` representa um boundary executável ou distribuível claro:
 
-```text
-Streamlit
-   |
-   | HTTP / SSE
-   v
-FastAPI --------------------------> PostgreSQL
-   |                                   ^
-   | cria Session + Execution          |
-   |                                   |
-   +---- Outbox --------------------> Runner
-                                        |
-                                        v
-                                  Agent Runtime
-                                        |
-                                LangGraph AgentProgram
-                                        |
-                        +---------------+---------------+
-                        |               |               |
-                     Context          Skills           Tools
-                                                        |
-                                                        v
-                                               SQLite do usuário
-
-Agent Runtime --> EventSink --> Redis projection/stream --> ExecutionObserver --> SSE
-                         \
-                          +--> Trace
-```
-
-PostgreSQL é a fonte durável de sessões, execuções, outbox, trace, Global Context e snapshots. Redis mantém hot state e o stream realtime. O SQLite em `data/challenge-1/anexo_desafio_1.db` é o banco de negócio acessado exclusivamente pela Database Tool read-only.
-
-## LLM
-
-O Agent depende apenas de `LLMClient`. Os providers concretos usam LangChain:
-
-- `openai`: `OpenAILLM` baseado em `ChatOpenAI`;
-- `deepseek`: `DeepSeekLLM` baseado em `ChatDeepSeek`.
-
-O provider ativo é escolhido por `LLM_PROVIDER=openai` ou `LLM_PROVIDER=deepseek`. A janela de contexto e a contagem de tokens vêm do modelo ativo.
-
-A API não bloqueia a criação de uma Execution com base na disponibilidade do Runner ou do provider. A etapa de Acceptance persiste `Execution(PENDING) + Outbox` atomicamente e retorna `202 Accepted`. Disponibilidade e configuração do LLM pertencem ao Runner.
+- `packages/core`: runtime do Agent, contexto, Skills, Tools, Observer, trace, persistência e migrations;
+- `packages/api`: composition root HTTP/SSE;
+- `packages/runner`: consumer independente responsável pela execução do Agent;
+- `packages/ui`: interface Streamlit, que consome somente a API pública.
 
 ## Runtime do Agent
 
-O `LangGraphAgentProgram` executa o ciclo:
+O `LangGraphAgentProgram` executa, de forma simplificada, o seguinte ciclo:
 
 ```text
 Agent
@@ -105,70 +136,29 @@ Reasoning / LLM
   +----------> Answer ------------> Client
 ```
 
-Uma Tool pode ser chamada várias vezes durante a mesma execução. Erros voltam para o Agent como observação e podem gerar novas tentativas. Chamadas independentes da mesma Tool podem executar em paralelo até o limite de `AGENT_TOOL_MAX_CONCURRENCY_PER_TOOL`.
+Uma Tool pode ser chamada várias vezes durante a mesma execução. Erros retornam para o Agent como observações, permitindo ajustar a estratégia e tentar novamente. Chamadas independentes podem executar em paralelo até o limite configurado.
 
-A execução termina quando o modelo conclui uma resposta ou quando `AGENT_RUNTIME_MAX_ITERATIONS` é atingido.
+A execução termina quando o modelo conclui a resposta ou quando o limite de iterações é atingido.
 
-## Context Manager
+## Visualizações inline
 
-O contexto é dividido em Global Context, Execution Context, Context Snapshot, Context Budget e Global Context Retriever. Snapshots são criados ao final de cada execução e também quando o Context Budget é ultrapassado durante uma execução. O Global Context continua sendo a fonte de verdade.
+A resposta final pode intercalar texto com até múltiplas visualizações estruturadas. São suportados:
 
-## Skills
+- `table` para leitura precisa de valores e rankings;
+- `bar` para comparação entre categorias;
+- `line` para evolução temporal ou sequências ordenadas;
+- `scatter` para relação entre duas medidas numéricas.
 
-Skills são arquivos `SKILL.md` lazy-loaded. O contexto base conhece apenas `name` e `description`; o corpo completo entra somente no reasoning que solicitou a Skill.
+O Agent decide quando uma visualização agrega valor. Os dados enviados ao renderer já devem estar no grão analítico final: contagens, médias, agregações e regras de negócio pertencem à investigação/SQL.
 
-Skills disponíveis:
+## LLM
 
-- `planning`;
-- `sql`;
-- `analysis`;
-- `visualization`.
+O Agent depende da abstração `LLMClient`. Os providers concretos usam LangChain:
 
-## Observer e reattach
+- `openai`: `OpenAILLM` baseado em `ChatOpenAI`;
+- `deepseek`: `DeepSeekLLM` baseado em `ChatDeepSeek`.
 
-Runtime e observação são independentes:
-
-```text
-Runtime --> ExecutionEventSink --> Redis
-                                   |
-                                   v
-                           ExecutionObserver
-                                   |
-                                   v
-                                  SSE
-```
-
-A Execution pertence ao Runtime; a conexão pertence ao Observer. Atualizar a página ou perder a conexão não cancela nem reinicia a execução.
-
-## Banco interno e migrations
-
-O schema do PostgreSQL é versionado exclusivamente com Alembic. As migrations pertencem ao mesmo package que possui os models persistentes:
-
-```text
-packages/core/
-├── alembic.ini
-├── migrations/
-│   ├── env.py
-│   ├── bootstrap.py
-│   └── versions/
-│       ├── 0001_initial_schema.py
-│       └── 0002_add_session_titles.py
-└── src/package/agent/database/
-```
-
-`packages/core/migrations/bootstrap.py` suporta banco novo e adoção segura do schema legado anterior. Schemas parcialmente compatíveis falham explicitamente em vez de serem adotados silenciosamente.
-
-Migrations são um job separado. API e Runner não executam migrations implicitamente no startup.
-
-## Docker
-
-Existe uma única imagem Python compartilhada por API, Runner, Streamlit e pelo job de migrations:
-
-```text
-docker/images/app/Dockerfile
-```
-
-Os processos são diferenciados apenas pelo comando definido no `compose.yaml`. O SQLite do desafio não é copiado para a imagem; somente o Runner recebe o arquivo por bind mount read-only.
+O provider ativo é selecionado por `LLM_PROVIDER=openai` ou `LLM_PROVIDER=deepseek`.
 
 ## Execução local com Docker Compose
 
@@ -178,7 +168,7 @@ Copie as variáveis de ambiente:
 cp .env.example .env
 ```
 
-Configure o provider, por exemplo:
+Configure um provider, por exemplo:
 
 ```env
 LLM_PROVIDER=openai
@@ -191,24 +181,12 @@ Suba o stack:
 docker compose up --build
 ```
 
-Ordem principal:
+A interface fica disponível em:
 
-```text
-PostgreSQL healthy
-      |
-      v
-migrations (one-shot)
-      |
-      v
-FastAPI healthy
-   +--+--+
-   |     |
-Runner Streamlit
-```
+- Streamlit: `http://localhost:8501`
+- API: `http://localhost:8000`
 
-A interface fica em `http://localhost:8501` e a API em `http://localhost:8000`.
-
-O Runner pode ser escalado:
+O Runner pode ser escalado independentemente:
 
 ```bash
 docker compose up --build --scale runner=2
@@ -226,7 +204,7 @@ Para remover também o volume PostgreSQL:
 docker compose down -v
 ```
 
-## Execução sem containers para os processos Python
+## Execução sem containers
 
 Instale as dependências do projeto e os packages locais:
 
@@ -239,7 +217,7 @@ pip install --no-deps \
   -e packages/ui
 ```
 
-Depois:
+Depois execute migrations, API, Runner e UI em processos separados:
 
 ```bash
 cd packages/core && alembic upgrade head && cd ../..
@@ -248,20 +226,65 @@ python -m package.runner.main
 streamlit run packages/ui/src/package/ui/app.py
 ```
 
-## Testes
+## Exemplos de consultas testadas
+
+Os cenários abaixo exercitam diferentes capacidades do Agent:
+
+| Exemplo | O que valida |
+| --- | --- |
+| `Liste os 5 estados com maior número de clientes que compraram via App em 2024 e mostre também a distribuição entre os 3 melhores compradores de 2024.` | decomposição em múltiplas etapas, agregações, ranking, múltiplas consultas e visualização |
+| `Quais categorias de produto tiveram maior participação nas compras?` | descoberta de schema, agregação e comparação categórica |
+| `Me fale qual cliente menos comprou no período e contextualize o resultado.` | ordenação, interpretação de granularidade e resposta analítica |
+| consultas que exigem schema ainda desconhecido | uso de `inspect_schema` antes da geração de SQL |
+| consultas com SQL inicialmente inválida durante a investigação | retorno do erro à execução e possibilidade de autocorreção pelo Agent |
+
+Como o sistema é agentic, a sequência exata de Tools pode variar entre modelos e execuções; o contrato importante é que os resultados sejam sustentados pelos dados efetivamente consultados.
+
+## Testes e CI
+
+Execute a suíte localmente com:
 
 ```bash
 pytest
 ```
 
-Os testes concorrentes contra PostgreSQL são habilitados com:
+Os testes concorrentes contra PostgreSQL podem ser habilitados com:
 
 ```bash
 RUN_POSTGRES_INTEGRATION_TESTS=1 pytest tests/test_context_repository_concurrency.py
 ```
 
-O workflow `.github/workflows/tests.yml` valida o Compose, constrói a imagem compartilhada, executa migrations duas vezes para validar idempotência, roda `alembic check`, habilita os testes PostgreSQL e browser e executa a suíte completa.
+O workflow `.github/workflows/tests.yml` valida:
 
-## Estado atual
+- configuração do Docker Compose;
+- build da imagem da aplicação;
+- migrations em banco novo e idempotência;
+- drift entre models e migrations com `alembic check`;
+- testes PostgreSQL;
+- testes de UI/browser;
+- suíte Python completa.
 
-Já estão implementados: execução durável via Outbox, Runner independente, Observer com reattach, Context Manager com snapshots e recuperação lexical, Skills lazy-loaded, providers OpenAI/DeepSeek, Database Tool read-only, loop LangGraph, interface Streamlit, cancelamento de inferência, migrations Alembic e stack completo via Docker Compose.
+## Decisões e trade-offs
+
+O desafio poderia ser implementado como uma única requisição HTTP síncrona. Esta solução separa **aceitação**, **execução** e **observação** para que a vida da execução não dependa da conexão do navegador.
+
+Isso adiciona PostgreSQL, Redis, Outbox e um Runner independente, mas entrega propriedades concretas: persistência da execução antes do processamento, reattach após refresh, streaming desacoplado, cancelamento e possibilidade de escalar workers sem duplicar a API.
+
+A complexidade adicional está concentrada em boundaries explícitos; o fluxo principal do Agent continua independente desses detalhes de transporte e persistência.
+
+## Melhorias e extensões
+
+Possíveis evoluções, fora do escopo necessário para o desafio:
+
+- avaliação automatizada da qualidade das respostas contra um conjunto de perguntas de negócio;
+- métricas de custo, latência e token usage por execução;
+- estratégias adicionais de recuperação de contexto;
+- suporte a novas Tools e outras fontes de dados além de SQLite;
+- autenticação e isolamento multi-tenant;
+- observabilidade distribuída com tracing externo;
+- filas especializadas para cargas maiores ou distribuição entre múltiplos nós.
+
+## Documentação
+
+- **[Arquitetura detalhada](docs/architecture.md)**
+- **[Enunciado do desafio](docs/challenge.pdf)**
