@@ -91,9 +91,39 @@ def parse_rich_content(
 
 
 def strip_visualization_blocks(content: str) -> str:
-    """Remove complete and incomplete visualization directives from user-visible rich text."""
-    blocks = parse_rich_content(content, allow_partial=False)
-    markdown = [block.content for block in blocks if isinstance(block, MarkdownBlock)]
+    """Remove visualization directives without parsing or validating their payloads.
+
+    This path is intentionally lexical so streaming UI updates can expose the
+    narrative text without repeatedly deserializing completed visualization JSON
+    on every model delta. Complete directives and an in-flight directive at the
+    end of the stream are both hidden until the final rich-content render.
+    """
+    if not content:
+        return ""
+
+    markdown: list[str] = []
+    position = 0
+
+    while position < len(content):
+        opening = _OPENING_RE.search(content, position)
+        if opening is None:
+            tail = content[position:]
+            partial_index = _partial_opening_index(tail)
+            if partial_index is not None:
+                tail = tail[:partial_index]
+            if tail:
+                markdown.append(tail)
+            break
+
+        prefix = content[position : opening.start()]
+        if prefix:
+            markdown.append(prefix)
+
+        closing = _CLOSING_RE.search(content, opening.end())
+        if closing is None:
+            break
+        position = closing.end()
+
     return "\n".join(part.strip("\n") for part in markdown if part.strip()).strip()
 
 

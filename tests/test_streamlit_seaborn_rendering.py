@@ -92,3 +92,27 @@ def test_render_rich_content_renders_two_inline_charts(monkeypatch) -> None:
     assert any("Primeiro ponto" in value for value in markdown)
     assert any("Conclusão" in value for value in markdown)
     assert len(parse_rich_content(_rich_answer())) == 5
+
+
+def test_streaming_rich_content_defers_visualizations(monkeypatch) -> None:
+    figures: list[Figure] = []
+    markdown: list[str] = []
+
+    monkeypatch.setattr(rendering.st, "pyplot", lambda fig, *, width: figures.append(fig))
+    monkeypatch.setattr(rendering.st, "markdown", lambda content: markdown.append(content))
+
+    rendered = rendering.render_rich_content(
+        _rich_answer() + "\n\nTexto que continua chegando depois dos gráficos.",
+        allow_partial=True,
+    )
+
+    assert rendered == 0
+    assert figures == []
+    assert len(markdown) == 1
+    assert "Primeiro ponto" in markdown[0]
+    assert "Segundo ponto" in markdown[0]
+    assert "Conclusão" in markdown[0]
+    assert "Texto que continua chegando" in markdown[0]
+    assert "```visualization" not in markdown[0]
+    assert "Primeiro gráfico" not in markdown[0]
+    assert "Segundo gráfico" not in markdown[0]

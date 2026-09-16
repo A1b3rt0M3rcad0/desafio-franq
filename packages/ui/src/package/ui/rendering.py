@@ -12,6 +12,7 @@ from package.ui.rich_content import (
     PendingVisualizationBlock,
     VisualizationBlock,
     parse_rich_content,
+    strip_visualization_blocks,
 )
 from package.ui.visualization import PreparedVisualization, prepare_visualization
 
@@ -20,8 +21,20 @@ _PLOT_LOCK = RLock()
 
 
 def render_rich_content(content: str, *, allow_partial: bool = False) -> int:
+    """Render assistant rich content.
+
+    While the answer is still streaming, only narrative Markdown is rendered.
+    Visualization directives are withheld until the final render so completed
+    charts are not rebuilt for every subsequent model delta.
+    """
+    if allow_partial:
+        narrative = strip_visualization_blocks(content)
+        if narrative:
+            st.markdown(narrative)
+        return 0
+
     rendered_visualizations = 0
-    for block in parse_rich_content(content, allow_partial=allow_partial):
+    for block in parse_rich_content(content, allow_partial=False):
         if isinstance(block, MarkdownBlock):
             if block.content.strip():
                 st.markdown(block.content)
