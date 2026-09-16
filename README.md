@@ -284,6 +284,7 @@ Possíveis evoluções, fora do escopo necessário para o desafio:
 - observabilidade distribuída com tracing externo;
 - filas especializadas para cargas maiores ou distribuição entre múltiplos nós.
 - hoje existe uma lacuna entre a execução e a persistência dos eventos. Uma melhoria significativa seria introduzir um journal persistente, evento a evento, em vez de depender apenas do hot state e do streaming durante a execução. Isso aumentaria consideravelmente a resiliência e a observabilidade do sistema, permitindo, por exemplo, retomar uma execução a partir do último evento persistido em caso de falha, interrupção ou reinicialização. Além disso, possibilitaria manter um trace completo e incremental da execução, sem depender de um estado terminal para consolidar e persistir as informações produzidas ao longo da execução do agente.
+- remover as ferramentas atualmente codificadas diretamente no agente e centralizar essas capacidades em um servidor MCP, contendo todas as ferramentas necessárias e pertinentes ao domínio do agente. Dessa forma, o agente deixa de depender de implementações acopladas ao seu código e passa a descobrir e utilizar ferramentas por meio de uma interface padronizada, melhorando a modularidade, a manutenção, a extensibilidade e a separação de responsabilidades. Isso também facilita a inclusão, substituição ou evolução de ferramentas sem exigir alterações diretas na lógica principal do agente.
 
 ## Documentação
 
