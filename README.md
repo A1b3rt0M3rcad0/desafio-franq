@@ -172,7 +172,7 @@ Configure um provider, por exemplo:
 
 ```env
 LLM_PROVIDER=deepseek
-OPENAI_API_KEY=sua-chave
+DEEPSEEK_API_KEY=sua-chave
 ```
 
 Suba o stack:
