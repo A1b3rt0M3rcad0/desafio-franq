@@ -91,3 +91,19 @@ def test_strip_visualization_blocks_keeps_only_narrative_text() -> None:
     assert "```visualization" not in stripped
     assert "Antes." in stripped
     assert "Depois." in stripped
+
+
+def test_strip_visualization_blocks_hides_incomplete_directive() -> None:
+    content = "Antes.\n\n```visualization\n{\"version\":1,\"type\":\"bar\""
+
+    stripped = strip_visualization_blocks(content)
+
+    assert stripped == "Antes."
+    assert "version" not in stripped
+
+
+def test_strip_visualization_blocks_hides_partial_opening_fence() -> None:
+    stripped = strip_visualization_blocks("Antes.\n```visua")
+
+    assert stripped == "Antes."
+    assert "```visua" not in stripped
