@@ -13,7 +13,7 @@ Implementação do **Desafio Técnico 1 da Franq**: um assistente de dados capaz
 - **Database Tool read-only** com validação de SQL, timeout, limite de linhas e conexão somente leitura.
 - **Recuperação de falhas durante a investigação**: erros de Tool retornam ao Agent como observação e podem gerar uma nova tentativa.
 - **Visualizações inline geradas pelo próprio Agent**, com suporte a tabela, barras, linha e dispersão.
-- **Execução durável e desacoplada da conexão do cliente** com PostgreSQL, Outbox e Runner independente.
+- **Execution registrada de forma durável e processada de forma assíncrona**, desacoplada da conexão do cliente, com PostgreSQL, Outbox e Runner independente.
 - **Streaming e reattach via SSE/Redis**: refresh ou perda da conexão não reinicia a execução.
 - **Rastreabilidade das operações observáveis**, incluindo iterações, chamadas de Tool, SQL e eventos da execução.
 - **Histórico de conversas, cancelamento, migrations Alembic e CI automatizado**.
@@ -28,7 +28,7 @@ A interface é implementada em Streamlit e consome somente a API pública do sis
   <img src="docs/images/analytical-result-overview.png" alt="Resultado analítico com tabela e gráfico" width="100%" />
 </p>
 
-O Agent pode combinar múltiplas consultas e apresentar diferentes perspectivas dentro da mesma resposta. A visualização é escolhida somente quando melhora materialmente a comunicação; os cálculos de negócio continuam sendo feitos durante a investigação, e não pelo renderer.
+O Agent pode combinar múltiplas consultas e apresentar diferentes perspectivas dentro da mesma resposta. O Agent é instruído a utilizar visualizações somente quando elas melhoram materialmente a comunicação; os cálculos de negócio continuam sendo feitos durante a investigação, e não pelo renderer.
 
 ### Execução transparente
 
@@ -39,6 +39,8 @@ O Agent pode combinar múltiplas consultas e apresentar diferentes perspectivas 
 O painel não expõe chain-of-thought. Ele mostra **ações verificáveis da execução**: fases, Tools utilizadas, argumentos, consultas SQL, sucessos, falhas e transições relevantes.
 
 ## Como o Agent investiga os dados
+
+Uma investigação típica pode seguir o fluxo abaixo. A sequência exata não é fixa: o runtime é iterativo e o Agent pode escolher Skills, Tools e novas consultas conforme as evidências obtidas em cada etapa.
 
 ```mermaid
 flowchart LR
@@ -62,6 +64,7 @@ O runtime é iterativo. Uma única pergunta pode exigir inspeção de schema, v�
 flowchart LR
     UI[Streamlit] -->|HTTP / SSE| API[FastAPI]
     API --> PG[(PostgreSQL)]
+    PG --> EX[Executions / Sessions]
     PG --> OB[Outbox]
     OB --> RUN[Runner]
     RUN --> AR[Agent Runtime]
@@ -70,12 +73,14 @@ flowchart LR
     AR --> SK[Skills]
     AR --> TOOL[Database Tool]
     TOOL --> SQ[(SQLite do desafio)]
-    AR --> REDIS[(Redis)]
+    AR --> SINK[Execution Event Sink]
+    SINK --> REDIS[(Redis)]
+    SINK --> TRACE[Trace durável / PostgreSQL]
     REDIS --> OBS[Execution Observer]
-    OBS -->|SSE| UI
+    OBS --> API
 ```
 
-**PostgreSQL** mantém o estado durável da aplicação. **Redis** mantém hot state e o stream realtime. O banco SQLite fornecido pelo desafio é tratado como dado externo e é montado somente no Runner, em modo read-only.
+**PostgreSQL** mantém o estado durável da aplicação, incluindo Sessions, Executions, Outbox e trace. A Outbox faz parte do próprio banco e permite aceitar a Execution e registrar o trabalho a ser processado na mesma transação. **Redis** mantém hot state e o stream realtime. O banco SQLite fornecido pelo desafio é tratado como dado externo e é montado somente no Runner, em modo read-only.
 
 A documentação detalhada das decisões, ownership de dados, fluxo de execução, Context Manager, Observer, Outbox, Runner, LLM providers e tratamento de falhas está em **[docs/architecture.md](docs/architecture.md)**.
 
@@ -142,14 +147,14 @@ A execução termina quando o modelo conclui a resposta ou quando o limite de it
 
 ## Visualizações inline
 
-A resposta final pode intercalar texto com até múltiplas visualizações estruturadas. São suportados:
+A resposta final pode intercalar texto com múltiplas visualizações estruturadas. São suportados:
 
 - `table` para leitura precisa de valores e rankings;
 - `bar` para comparação entre categorias;
 - `line` para evolução temporal ou sequências ordenadas;
 - `scatter` para relação entre duas medidas numéricas.
 
-O Agent decide quando uma visualização agrega valor. Os dados enviados ao renderer já devem estar no grão analítico final: contagens, médias, agregações e regras de negócio pertencem à investigação/SQL.
+O Agent é instruído a usar uma visualização quando ela agrega valor. Os dados enviados ao renderer já devem estar no grão analítico final: contagens, médias, agregações e regras de negócio pertencem à investigação/SQL.
 
 ## LLM
 
@@ -161,6 +166,8 @@ O Agent depende da abstração `LLMClient`. Os providers concretos usam LangChai
 O provider ativo é selecionado por `LLM_PROVIDER=openai` ou `LLM_PROVIDER=deepseek`.
 
 ## Execução local com Docker Compose
+
+O Docker Compose é o caminho recomendado para executar o projeto completo localmente.
 
 Copie as variáveis de ambiente:
 
@@ -206,6 +213,8 @@ docker compose down -v
 
 ## Execução sem containers
 
+Para executar os processos Python diretamente no host, são necessários **Python 3.14+**, **PostgreSQL**, **Redis** e um arquivo `.env` configurado com endpoints e credenciais compatíveis com o ambiente local.
+
 Instale as dependências do projeto e os packages locais:
 
 ```bash
@@ -228,15 +237,18 @@ streamlit run packages/ui/src/package/ui/app.py
 
 ## Exemplos de consultas testadas
 
-Os cenários abaixo exercitam diferentes capacidades do Agent:
+As perguntas do próprio desafio foram usadas como referência principal para validar as capacidades do Agent:
 
 | Exemplo | O que valida |
 | --- | --- |
-| `Liste os 5 estados com maior número de clientes que compraram via App em 2024 e mostre também a distribuição entre os 3 melhores compradores de 2024.` | decomposição em múltiplas etapas, agregações, ranking, múltiplas consultas e visualização |
-| `Quais categorias de produto tiveram maior participação nas compras?` | descoberta de schema, agregação e comparação categórica |
-| `Me fale qual cliente menos comprou no período e contextualize o resultado.` | ordenação, interpretação de granularidade e resposta analítica |
-| consultas que exigem schema ainda desconhecido | uso de `inspect_schema` antes da geração de SQL |
-| consultas com SQL inicialmente inválida durante a investigação | retorno do erro à execução e possibilidade de autocorreção pelo Agent |
+| `Liste os 5 estados com maior número de clientes que compraram via app em maio.` | descoberta de schema, relacionamento entre clientes e compras, filtro temporal, canal, contagem distinta e ranking |
+| `Quantos clientes interagiram com campanhas de WhatsApp em 2024?` | descoberta de schema, filtros temporais e categóricos e contagem de clientes |
+| `Quais categorias de produto tiveram o maior número de compras em média por cliente?` | agregação em múltiplas granularidades e comparação entre categorias |
+| `Qual o número de reclamações não resolvidas por canal?` | filtros combinados, agrupamento por canal e comparação de resultados |
+| `Qual a tendência de reclamações por canal no último ano?` | série temporal, agregação por período e canal e visualização de linha |
+| `Liste os 5 estados com maior número de clientes que compraram via App em 2024 e mostre também a distribuição entre os 3 melhores compradores de 2024.` | cenário adicional de stress para decomposição em múltiplas etapas, múltiplas consultas, ranking e visualização |
+
+Também são cobertos cenários em que o schema ainda não foi inspecionado e situações em que uma Tool retorna erro durante a investigação, permitindo ao Agent incorporar essa observação e ajustar a próxima tentativa.
 
 Como o sistema é agentic, a sequência exata de Tools pode variar entre modelos e execuções; o contrato importante é que os resultados sejam sustentados pelos dados efetivamente consultados.
 
@@ -268,7 +280,7 @@ O workflow `.github/workflows/tests.yml` valida:
 
 O desafio poderia ser implementado como uma única requisição HTTP síncrona. Esta solução separa **aceitação**, **execução** e **observação** para que a vida da execução não dependa da conexão do navegador.
 
-Isso adiciona PostgreSQL, Redis, Outbox e um Runner independente, mas entrega propriedades concretas: persistência da execução antes do processamento, reattach após refresh, streaming desacoplado, cancelamento e possibilidade de escalar workers sem duplicar a API.
+Isso adiciona PostgreSQL, Redis, Outbox e um Runner independente, mas entrega propriedades concretas: persistência da Execution antes do processamento, reattach após refresh, streaming desacoplado, cancelamento e possibilidade de escalar workers sem duplicar a API.
 
 A complexidade adicional está concentrada em boundaries explícitos; o fluxo principal do Agent continua independente desses detalhes de transporte e persistência.
 
@@ -282,9 +294,9 @@ Possíveis evoluções, fora do escopo necessário para o desafio:
 - suporte a novas Tools e outras fontes de dados além de SQLite;
 - autenticação e isolamento multi-tenant;
 - observabilidade distribuída com tracing externo;
-- filas especializadas para cargas maiores ou distribuição entre múltiplos nós.
-- hoje existe uma lacuna entre a execução e a persistência dos eventos. Uma melhoria significativa seria introduzir um journal persistente, evento a evento, em vez de depender apenas do hot state e do streaming durante a execução. Isso aumentaria consideravelmente a resiliência e a observabilidade do sistema, permitindo, por exemplo, retomar uma execução a partir do último evento persistido em caso de falha, interrupção ou reinicialização. Além disso, possibilitaria manter um trace completo e incremental da execução, sem depender de um estado terminal para consolidar e persistir as informações produzidas ao longo da execução do agente.
-- remover as ferramentas atualmente codificadas diretamente no agente e centralizar essas capacidades em um servidor MCP, contendo todas as ferramentas necessárias e pertinentes ao domínio do agente. Dessa forma, o agente deixa de depender de implementações acopladas ao seu código e passa a descobrir e utilizar ferramentas por meio de uma interface padronizada, melhorando a modularidade, a manutenção, a extensibilidade e a separação de responsabilidades. Isso também facilita a inclusão, substituição ou evolução de ferramentas sem exigir alterações diretas na lógica principal do agente.
+- filas especializadas para cargas maiores ou distribuição entre múltiplos nós;
+- introduzir um **journal durável e completo da execução associado a checkpoints do estado do Agent**. Atualmente, eventos observáveis selecionados já são persistidos incrementalmente no trace, enquanto Redis mantém hot state e o stream realtime. Uma evolução seria persistir informação suficiente para reconstruir o estado operacional do runtime e permitir que uma Execution interrompida por falha de processo fosse retomada a partir de um checkpoint seguro;
+- disponibilizar as **Tools atualmente implementadas localmente por meio de um servidor MCP**. O runtime já depende de contratos e de um `ToolRegistry`, portanto essa evolução não teria como objetivo desacoplar Tools do Agent — essa separação já existe —, mas desacoplar também sua implementação e deployment, permitindo descoberta e integração de capacidades externas por um protocolo padronizado.
 
 ## Documentação
 
