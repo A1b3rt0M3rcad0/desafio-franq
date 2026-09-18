@@ -297,6 +297,7 @@ Possíveis evoluções, fora do escopo necessário para o desafio:
 - filas especializadas para cargas maiores ou distribuição entre múltiplos nós;
 - introduzir um **journal durável e completo da execução associado a checkpoints do estado do Agent**. Atualmente, eventos observáveis selecionados já são persistidos incrementalmente no trace, enquanto Redis mantém hot state e o stream realtime. Uma evolução seria persistir informação suficiente para reconstruir o estado operacional do runtime e permitir que uma Execution interrompida por falha de processo fosse retomada a partir de um checkpoint seguro;
 - disponibilizar as **Tools atualmente implementadas localmente por meio de um servidor MCP**. O runtime já depende de contratos e de um `ToolRegistry`, portanto essa evolução não teria como objetivo desacoplar Tools do Agent — essa separação já existe —, mas desacoplar também sua implementação e deployment, permitindo descoberta e integração de capacidades externas por um protocolo padronizado.
+- Adicionar uma fila para o processamento das mensagens do Outbox, evitando o consumo direto do banco de dados e melhorando o desacoplamento, a escalabilidade e a eficiência do processamento.
 
 ## Documentação
 
